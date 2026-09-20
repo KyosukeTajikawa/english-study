@@ -1,0 +1,19 @@
+# Cloudflare Pages Functions のローカル用環境変数
+#
+# このファイルはコミットする。実際の値は .dev.vars に書く（.gitignore 済み）。
+# 本番の値は Cloudflare Pages の管理画面で設定する。
+# INTERNAL_API_KEY は Secret タイプ（暗号化・表示不可）で登録すること。
+
+# 中継先の Lambda。ローカルでは lambda/src/local-server.ts のアドレス。
+LAMBDA_FUNCTION_URL=http://127.0.0.1:3001
+
+# Lambda 側の lambda/.env と同じ値にすること。
+# 生成: openssl rand -hex 32
+INTERNAL_API_KEY=
+
+# --- ステップ4以降で使う ---
+#
+# ローカル検証用の固定 JWT。lambda/scripts/gen-test-keys.ts が生成する。
+# Access のヘッダが無いときのフォールバックとして中継が使う。
+# ★ 本番の Cloudflare Pages にはこの変数を設定しないこと。
+# LOCAL_TEST_JWT=

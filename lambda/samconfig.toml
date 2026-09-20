@@ -1,0 +1,18 @@
+# sam deploy の設定。対話入力（--guided）の代わりにここへ固定する。
+# Git 管理下に置くことで、誰が実行しても同じスタックに同じ設定でデプロイされる。
+version = 0.1
+
+[default.global.parameters]
+stack_name = "english-study-app"
+
+[default.build.parameters]
+cached = true
+
+[default.deploy.parameters]
+# ★ 東京。Gemini API のリージョン制限のため変更しないこと。
+region = "ap-northeast-1"
+# Lambda の実行ロールを SAM に作らせるために必要。
+capabilities = "CAPABILITY_IAM"
+# デプロイ用の S3 バケットを AWS 側に自動作成・再利用させる。
+resolve_s3 = true
+confirm_changeset = false

@@ -16,7 +16,7 @@
 - Cloudflare アカウント
 - AWS アカウント
 - Google Gemini API キー（[AI Studio](https://aistudio.google.com/apikey) で発行）
-- Node.js 20.9.0 以上
+- Node.js 22.12 以上
 
 ## 追加・変更するファイル
 
@@ -29,8 +29,9 @@
 | `lambda/src/handlers/health.ts` | 新規 | 疎通確認用の最小ハンドラ |
 | `lambda/package.json` | 新規 | Lambda 側の依存 |
 | `lambda/tsconfig.json` | 新規 | Lambda 側の設定（`include` を `src/` と `shared/` に限定） |
+| `lambda/eslint.config.mjs` | 新規 | **Lambda 側の lint**（typescript-eslint。ルートの Next.js 設定を使わない） |
 | `tsconfig.json` | 変更 | **`exclude` の追加（下記）** と `shared/` の `paths` |
-| `eslint.config.mjs` | 変更 | **`globalIgnores` に `lambda/**`、`functions/**`、`out/**` を追加** |
+| `eslint.config.mjs` | 変更 | **`globalIgnores` に `lambda/**`、`functions/**`、`e2e/**` を追加** |
 | `functions/tsconfig.json` | 新規 | Workers ランタイム用（`@cloudflare/workers-types`） |
 | `shared/types.ts` | 新規 | フロントと Lambda で共有する型 |
 | `functions/api/[[path]].ts` | 新規 | Pages Functions（Lambda への中継） |
@@ -49,7 +50,17 @@
 - `exclude: ["node_modules"]` はルート直下の `./node_modules` にしかマッチせず、`lambda/node_modules/**/*.ts` が吸い込まれる
 - `functions/` は Workers ランタイム前提のコードだが、ルートの `lib: ["dom"]` + Next 型で評価される
 
-**ルートの `exclude` に `**/node_modules`、`lambda`、`functions`、`e2e`、`out` を追加する。** ESLint の `globalIgnores` も同様に拡張する（放置するとステップ10の「lint が警告なしで通る」が達成できない）。
+**ルートの `exclude` に `**/node_modules`、`lambda`、`functions`、`e2e`、`out` を追加する。** ESLint の `globalIgnores` も同様に拡張する。
+
+**除外したら、その分の検査を必ず別途用意する。** 除外しただけだとロジックの大半（Lambda 側）が静的検査を一度も通らず、ステップ10の「lint が警告なしで通る」が**中身のない条件**になる。
+
+| コードベース | 型チェック | lint |
+| --- | --- | --- |
+| `src/`（フロント） | `npm run typecheck` | `npm run lint` |
+| `functions/` | `npm run typecheck:functions` | ルートの ESLint 対象外。型チェックのみ |
+| `lambda/` | `cd lambda && npm run typecheck` | `cd lambda && npm run lint` |
+
+`functions/` は `@cloudflare/workers-types` を使うため専用の `tsconfig.json` が要る（ルートの `lib: ["dom"]` では評価できない）。
 
 ## 依存パッケージ
 
@@ -264,7 +275,7 @@ Cloudflare Access の Cookie がブラウザから自動で送られるように
 
 ## 注意点
 
-- **AWS の課金に注意。** 無料枠を超えないよう、AWS Budgets で $1 のアラートを設定しておくと安心。Lambda 無料枠が恒久か12ヶ月限定かは公式で確認できなかったので、ここで確認する
+- **AWS の課金に注意。** 無料枠を超えないよう、AWS Budgets で $1 のアラートを設定しておく。Lambda の無料枠自体は恒久だが、**2025-07-15 以降に作った新規アカウントは Free Plan に入り6ヶ月で自動クローズ**される。恒久運用するならアカウント種別を確認し、必要なら Paid Plan に切り替える
 - **CORS は本番では不要。** Pages Functions 経由で同一オリジンになるため。開発中にブラウザから直接 Lambda を叩いた場合のみ問題になるが、その叩き方自体を避ける
 - **IAM は最小権限にする。** SAM の既定のまま広い権限にしない。Lambda 実行ロールと EventBridge の起動ロールを確認する
 - **`.env.example` はコミットする。** ステップ3・9で変数が増えるたびに更新すること

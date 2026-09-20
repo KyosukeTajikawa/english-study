@@ -122,6 +122,8 @@ TDD の題材として `lambda/src/lib/auth.ts` を選ぶ。
 | --- | --- |
 | `next dev` は `functions/api/[[path]].ts` を実行しない。同一オリジンの `/api/*` が解決されない | **`npx wrangler pages dev out/`** で Pages Functions ごと起動する。本番と同じ経路になる |
 | `sam local start-lambda` は **Invoke API** の模擬であって HTTP サーバーではない。`fetch("/api/...")` は通らない | `lambda/src/local-server.ts` を用意し、`router.ts` を Node の HTTP サーバーで包む。Function URL のイベント形状に変換するだけ |
+
+> ⚠️ **`local-server.ts` を `node` で直接実行できない。** Lambda 側の import は ESM 規約に従って `.js` 拡張子を付けており（`./router.js`）、Node の型ストリップ（`--experimental-strip-types`）はこれを `.ts` に解決しない。**esbuild でバンドルしてから実行する**か `tsx` を使うこと。ステップ2で実測して確認済み。
 | ローカルには Cloudflare Access の JWT がない。全ハンドラが 401 になる | **`CF_ACCESS_JWKS_URL` をテスト用鍵に差し替える**（ステップ3） |
 
 **認証を迂回するフラグは作らない。** 検証ロジックを本番と同一に保ったまま、信頼する鍵だけを差し替える。

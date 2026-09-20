@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // ルートの Next.js 設定で評価してはいけない領域。
+    // それぞれ専用の設定と typecheck を持つ（doc/steps/02-smoke-test.md）。
+    "lambda/**",
+    "functions/**",
+    "e2e/**",
   ]),
 ]);
 

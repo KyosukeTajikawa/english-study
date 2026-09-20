@@ -1,0 +1,158 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: English Study App - API (Lambda Function URL + internal router)
+
+Parameters:
+  InternalApiKeyParameter:
+    Type: String
+    Default: /english-study-app/internal-api-key
+    Description: >-
+      共有シークレット INTERNAL_API_KEY を保管した SSM Parameter Store の名前。
+      値そのものをこのファイルに書かないこと（template.yaml は Git 管理下に入る）。
+      登録: aws ssm put-parameter --name <name> --type SecureString --value <secret>
+
+  GeminiApiKeyParameter:
+    Type: String
+    Default: /english-study-app/gemini-api-key
+    Description: >-
+      Gemini API キーを保管した SSM Parameter Store の名前。
+      internal-api-key と同様、値そのものはここに書かない。
+      ★ ステップ2の疎通確認が終わったら、Gemini を呼ぶハンドラごと削除し、
+      この環境変数も外すこと（本番に Gemini 呼び出し口を残さない）。
+
+  ReservedConcurrency:
+    Type: Number
+    Default: 0
+    Description: >-
+      同時実行数の上限。Function URL は AuthType NONE で公開されるため、
+      無認証リクエストでも Lambda は起動し課金される。ここで最悪ケースの
+      コストに天井を設ける。
+      ただし共有シークレットの検証は Lambda 起動「後」に走るため、この枠は
+      無認証リクエストでも消費される = 低すぎる値は自ら DoS 経路を作る
+      （数件の並行リクエストで正規利用がスロットリングされる）。
+      コストと可用性のトレードオフ。想定同時利用者数に対し十分な余裕を取ること。
+
+      ★ 0 を指定すると予約しない（既定）。
+      新規 AWS アカウントは同時実行数の上限が 10 に制限されており、AWS は
+      「未予約枠を最低 10 残すこと」を要求する。つまり上限 10 のままでは
+      1 でも予約できず、デプロイが次のエラーで失敗する:
+        Specified ReservedConcurrentExecutions ... decreases account's
+        UnreservedConcurrentExecution below its minimum value of [10]
+      上限 10 自体がアカウント全体のコスト天井として働くため、この状態では
+      予約は不要。Service Quotas で上限を引き上げた後に値を設定すること。
+
+Conditions:
+  # 0 のときは ReservedConcurrentExecutions を「設定しない」状態にする。
+  HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x # nodejs20.x は 2026-04-30 に廃止済み
+    Architectures:
+      - arm64
+    Timeout: 10
+    MemorySize: 512
+    LoggingConfig:
+      LogFormat: JSON
+      # ★ ログ量を最小に保つ。CloudWatch Logs の無料枠は 5GB/月。
+      # WARN 未満（console.log / info）は記録されない。障害調査に要る
+      # console.error は ERROR 扱いなので残る。
+      ApplicationLogLevel: WARN
+      SystemLogLevel: WARN
+
+Resources:
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        # ★ ESM ではなく CommonJS でバンドルする。
+        # npm の実用的なパッケージの多くは今も CommonJS で書かれており、
+        # 内部で require() を呼ぶ。ESM 形式にバンドルすると require が
+        # 存在せず、読み込んだ瞬間に落ちる:
+        #   Dynamic require of "node:https" is not supported   (@aws-sdk)
+        #   Dynamic require of "child_process" is not supported (@google/genai)
+        # 通常は esbuild の banner で createRequire を注入して回避するが、
+        # SAM の esbuild は banner に対応していない。CJS で出力すれば
+        # require がそのまま使えるため、この種の問題が原理的に起きない。
+        # package.json が "type": "module" なので拡張子は .cjs にする。
+        Format: cjs
+        Minify: true
+        Target: node22
+        OutExtension:
+          - .js=.cjs
+        # ★ AWS SDK はバンドルしない。
+        # SDK は CommonJS で書かれており、ESM 形式にバンドルすると
+        # 内部の require("node:https") が解決できず起動時に落ちる:
+        #   Error: Dynamic require of "node:https" is not supported
+        # SAM の esbuild は banner オプション（createRequire の注入）に
+        # 対応していないため、ランタイム同梱の SDK を使う。
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+        EntryPoints:
+          - src/index.ts
+    Properties:
+      CodeUri: ./
+      Handler: index.handler
+      Description: 全 API を1関数で受け、src/router.ts がパスで振り分ける
+      ReservedConcurrentExecutions:
+        !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref "AWS::NoValue"]
+      Environment:
+        Variables:
+          # ★ 秘密の「値」ではなく「SSM パラメータ名」を渡す。
+          # {{resolve:ssm-secure:...}} は Lambda の環境変数では使えない
+          # （復号済みの平文が関数設定に保存されるため AWS が禁止している）。
+          # 値の取得は実行時に src/lib/secrets.ts が行う。
+          INTERNAL_API_KEY_PARAMETER: !Ref InternalApiKeyParameter
+          # ★ ステップ2の疎通確認専用。確認後に削除する。
+          GEMINI_API_KEY_PARAMETER: !Ref GeminiApiKeyParameter
+          NODE_OPTIONS: --enable-source-maps
+      Policies:
+        # 上記2つのパラメータだけを読めるようにする（他は読めない）。
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+              Resource:
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${InternalApiKeyParameter}"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${GeminiApiKeyParameter}"
+        # SecureString の復号に必要。SSM 経由の呼び出しに限定する。
+        - Statement:
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub "ssm.${AWS::Region}.amazonaws.com"
+      LoggingConfig:
+        # 保持期間を設けたロググループを明示する。既定のままだと
+        # 「無期限保持」になり、無料枠 5GB を少しずつ食い潰す。
+        LogGroup: !Ref ApiLogGroup
+      FunctionUrlConfig:
+        # ブラウザから Cloudflare Pages Functions 経由で叩くため IAM 署名は使えない。
+        # 代わりに X-Internal-Api-Key（router.ts で全ルート共通に検証）で守る。
+        AuthType: NONE
+        # CORS は設定しない。本番は Pages Functions 経由の同一オリジンで、
+        # ブラウザから Function URL を直接叩くことはない。
+        # そもそも CORS はブラウザにしか効かず、直接アクセスの防御にならない。
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/english-study-app-api
+      # 14日で自動削除。個人開発の障害調査にはこれで十分で、
+      # 保存量が青天井に増えるのを防ぐ。
+      RetentionInDays: 14
+
+Outputs:
+  ApiFunctionUrl:
+    Description: >-
+      Cloudflare Pages Functions の環境変数 LAMBDA_FUNCTION_URL に設定する。
+      フロントエンドには埋め込まないこと（Access を素通りする経路になる）。
+    Value: !GetAtt ApiFunctionUrl.FunctionUrl
+
+  ApiFunctionArn:
+    Description: API 関数の ARN
+    Value: !GetAtt ApiFunction.Arn
