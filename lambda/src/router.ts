@@ -3,8 +3,6 @@ import { hasInternalKeyHeader, isValidInternalKey } from "./lib/internal-auth.js
 import { getSecret } from "./lib/secrets.js";
 import { fail } from "./lib/response.js";
 import { handleHealth } from "./handlers/health.js";
-// ★ ステップ2の疎通確認専用。確認後にこの import と下の ROUTES 行を削除する。
-import { handleGeminiSmoke } from "./handlers/_gemini-smoke.js";
 
 /**
  * パス → ハンドラの振り分け。
@@ -41,11 +39,7 @@ interface Route {
   handler: RouteHandler;
 }
 
-const ROUTES: Route[] = [
-  { method: "GET", pattern: "/api/health", handler: handleHealth },
-  // ★ ステップ2の疎通確認専用。確認後に削除する（_gemini-smoke.ts ごと）。
-  { method: "GET", pattern: "/api/_gemini-smoke", handler: handleGeminiSmoke },
-];
+const ROUTES: Route[] = [{ method: "GET", pattern: "/api/health", handler: handleHealth }];
 
 export async function route(event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLResult> {
   const headers = normalizeHeaders(event.headers);

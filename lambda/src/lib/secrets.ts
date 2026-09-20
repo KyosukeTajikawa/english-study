@@ -23,8 +23,13 @@ import { SSMClient, GetParametersCommand } from "@aws-sdk/client-ssm";
  * 1回だけで、以降は追加のレイテンシも API 呼び出しも発生しない。
  */
 
-/** 取得対象の秘密情報。 */
-export type SecretName = "INTERNAL_API_KEY" | "GEMINI_API_KEY";
+/**
+ * 取得対象の秘密情報。
+ *
+ * ステップ3で "DATABASE_URL" 等を追加する際は、ここと PARAMETER_NAME_ENV、
+ * template.yaml の環境変数・IAM ポリシーの4箇所をセットで更新する。
+ */
+export type SecretName = "INTERNAL_API_KEY";
 
 /**
  * 秘密情報ごとの「SSM パラメータ名を格納した環境変数」の名前。
@@ -32,8 +37,6 @@ export type SecretName = "INTERNAL_API_KEY" | "GEMINI_API_KEY";
  */
 const PARAMETER_NAME_ENV: Record<SecretName, string> = {
   INTERNAL_API_KEY: "INTERNAL_API_KEY_PARAMETER",
-  // ★ ステップ2の疎通確認専用。確認後に _gemini-smoke.ts ごと削除する。
-  GEMINI_API_KEY: "GEMINI_API_KEY_PARAMETER",
 };
 
 const client = new SSMClient({});

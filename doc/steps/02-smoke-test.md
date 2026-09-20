@@ -179,6 +179,27 @@ sam deploy --guided     # 初回のみ。以降は sam deploy
 
    > Cloudflare の公式ドキュメントに「クライアント由来の `Cf-` ヘッダを除去する」という記述は**見つからない**。除去されない可能性がある。**除去されなくても構成は安全**で、防御の本体は Lambda 側の署名・`aud`・`iss` 検証である。結果をドキュメントに残すことが目的
 
+   #### ★ 実測結果（2026-09-20）
+
+   **Cloudflare はクライアント由来の `cf-access-jwt-assertion` を除去しない。** 予想どおりだった。
+
+   Access アプリケーションを**設定する前**に、本番 URL へ偽の値を付けて送ったところ、Lambda まで到達して 200 が返った。
+
+   ```bash
+   curl -H "cf-access-jwt-assertion: forged-token-for-testing" \
+     https://<project>.pages.dev/api/health
+   # → 200 {"ok":true,"data":{"status":"ok","region":"ap-northeast-1",...}}
+   ```
+
+   中継（`functions/api/[[path]].ts`）はヘッダの**存在**しか見ないため、偽の値でも転送し、正しい `X-Internal-Api-Key` を付け足してしまう。ステップ2の時点では Lambda 側の JWT 署名検証が未実装なので、**そのまま通る。**
+
+   Access 設定後は同じリクエストが **302（ログイン画面へのリダイレクト）** になり、Pages Functions にも Lambda にも到達しなくなった。Access は**ヘッダではなく署名付き Cookie**（`CF_Authorization`）を見るため、ヘッダを偽造しても意味がない。
+
+   **結論と、ここから導かれる必須事項:**
+
+   - 「除去されないが構成は安全」という前提は**Access が全入口に設定されていて初めて成立する**。ワイルドカード（`*.example.pages.dev`）は本番のホスト名に一致しないため、**本番用のアプリケーションを別に作る必要がある**（実際にここが抜けていた）
+   - 防御の本体である **JWT の署名・`aud`・`iss` 検証（ステップ3）が入るまでは、Access が唯一の防壁**である。ステップ3を先送りしないこと
+
 ### 5. Pages Functions（中継）
 
 `functions/api/[[path]].ts` は、`/api/*` へのリクエストを Lambda に転送するだけの薄い処理。
@@ -249,7 +270,7 @@ Cloudflare Access の Cookie がブラウザから自動で送られるように
 - [ ] `npm run build` で `out/` が生成される
 - [ ] **Function URL を署名なしで直叩きすると 403**（`AuthType: AWS_IAM` が効いている。CloudWatch にログが出ない）
 - [ ] Cloudflare Pages にデプロイした URL が表示される
-- [ ] **未ログインでアクセスするとログイン画面が出る**（カスタムドメイン・本番 `pages.dev`・プレビュー URL の3つすべて）
+- [ ] **未ログインでアクセスするとログイン画面が出る**（本番 `pages.dev`・プレビュー URL。カスタムドメインは使わない方針のため対象外）
 - [ ] ログイン後、画面が表示される
 - [ ] `/api/health` を叩くと Lambda のレスポンスが返る
 - [ ] **Lambda から Gemini を呼べる**
@@ -273,6 +294,40 @@ Cloudflare Access の Cookie がブラウザから自動で送られるように
 3. または OpenAI 等の別 API に切り替える
 
 いずれにせよ**この時点で判明すれば被害は小さい。** これがステップ2を最優先にする理由。
+
+## ステップ2で判明した事実（実施記録 2026-09-20）
+
+いずれも**実際にデプロイして初めて判明した**もので、ドキュメントや `sam validate` では検出できなかった。
+
+| 事象 | 対処 |
+| --- | --- |
+| `{{resolve:ssm-secure:}}` は **Lambda の環境変数では使えない**（復号済みの平文が関数設定に保存されるため AWS が禁止） | 環境変数には**パラメータ名**だけを渡し、値は実行時に `src/lib/secrets.ts` が SSM から取得してキャッシュする |
+| 新規 AWS アカウントは**同時実行数の上限が 10**。AWS は未予約枠を最低 10 要求するため、`ReservedConcurrentExecutions` を 1 でも指定するとデプロイが失敗する | `ReservedConcurrency` の既定を 0 にし、`Conditions` で「指定しない」状態にできるようにした |
+| esbuild の **ESM 出力では CommonJS 依存が起動時に落ちる**（`Dynamic require of "node:https" is not supported` 等）。SAM の esbuild は `banner` に非対応で、`createRequire` を注入できない | `Format: cjs` / `OutExtension: .js=.cjs` に変更。AWS SDK はランタイム同梱のものを使う（`External`） |
+| Cloudflare Pages の Git ビルドは `npm ci` を使うため、**lock ファイルの不整合でビルドが落ちる**。さらに npm のバージョン差で解決結果が変わり、lock を作り直しても再発した | `.nvmrc` で Node のバージョンを開発環境に合わせて固定した |
+| `gemini-2.5-flash-lite` は**新規ユーザーには提供されない**（モデル一覧 API には出るが 404 になる） | `gemini-3.5-flash-lite` を使用。**モデル一覧にあっても呼べるとは限らない**点はステップ6で再確認する |
+
+### ステップ3で使う値（Cloudflare Access）
+
+Access アプリケーション作成後、ログイン画面へのリダイレクト URL から取得できる。
+
+| 環境変数 | 取得元 |
+| --- | --- |
+| `CF_ACCESS_TEAM_DOMAIN` | リダイレクト先のホスト名（`<team>.cloudflareaccess.com`） |
+| `CF_ACCESS_AUD` | リダイレクト URL のクエリ `kid=`（アプリケーション固有の ID） |
+
+`aud` を検証しないと、**同じ Cloudflare チームの別アプリ向けトークンでも通る**。
+
+### Gemini 疎通確認の後片付け
+
+ステップ2完了時に以下を削除済み。**ステップ6で Gemini を実装する際に再度必要になる。**
+
+- `lambda/src/handlers/_gemini-smoke.ts`（ファイルごと削除）
+- `router.ts` の登録、`secrets.ts` の `GEMINI_API_KEY`
+- `template.yaml` の `GeminiApiKeyParameter`・環境変数・IAM 権限
+- `@google/genai` パッケージ（バンドルが 716KB → 4.1KB に減少）
+
+SSM の `/english-study-app/gemini-api-key` は**残してある**（暗号化済みで、Lambda の IAM 権限からは外したため読めない）。ステップ6でそのまま使える。
 
 ## 注意点
 

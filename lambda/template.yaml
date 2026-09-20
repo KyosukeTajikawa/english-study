@@ -11,15 +11,6 @@ Parameters:
       値そのものをこのファイルに書かないこと（template.yaml は Git 管理下に入る）。
       登録: aws ssm put-parameter --name <name> --type SecureString --value <secret>
 
-  GeminiApiKeyParameter:
-    Type: String
-    Default: /english-study-app/gemini-api-key
-    Description: >-
-      Gemini API キーを保管した SSM Parameter Store の名前。
-      internal-api-key と同様、値そのものはここに書かない。
-      ★ ステップ2の疎通確認が終わったら、Gemini を呼ぶハンドラごと削除し、
-      この環境変数も外すこと（本番に Gemini 呼び出し口を残さない）。
-
   ReservedConcurrency:
     Type: Number
     Default: 0
@@ -107,11 +98,9 @@ Resources:
           # （復号済みの平文が関数設定に保存されるため AWS が禁止している）。
           # 値の取得は実行時に src/lib/secrets.ts が行う。
           INTERNAL_API_KEY_PARAMETER: !Ref InternalApiKeyParameter
-          # ★ ステップ2の疎通確認専用。確認後に削除する。
-          GEMINI_API_KEY_PARAMETER: !Ref GeminiApiKeyParameter
           NODE_OPTIONS: --enable-source-maps
       Policies:
-        # 上記2つのパラメータだけを読めるようにする（他は読めない）。
+        # このパラメータだけを読めるようにする（他は読めない）。
         - Statement:
             - Effect: Allow
               Action:
@@ -119,7 +108,6 @@ Resources:
                 - ssm:GetParameters
               Resource:
                 - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${InternalApiKeyParameter}"
-                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${GeminiApiKeyParameter}"
         # SecureString の復号に必要。SSM 経由の呼び出しに限定する。
         - Statement:
             - Effect: Allow
