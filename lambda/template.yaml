@@ -131,8 +131,17 @@ Resources:
         # 「無期限保持」になり、無料枠 5GB を少しずつ食い潰す。
         LogGroup: !Ref ApiLogGroup
       FunctionUrlConfig:
-        # ブラウザから Cloudflare Pages Functions 経由で叩くため IAM 署名は使えない。
-        # 代わりに X-Internal-Api-Key（router.ts で全ルート共通に検証）で守る。
+        # 現状は X-Internal-Api-Key（router.ts で全ルート共通に検証）で守る。
+        #
+        # ★ 注意: 「ブラウザから叩くので IAM 署名は使えない」わけではない。
+        # 署名するのはブラウザではなく Pages Functions（サーバー側）で、
+        # Workers の WebCrypto には HMAC-SHA256 があるため SigV4 は実装できる。
+        # AuthType: AWS_IAM は技術的に選択可能で、選ばなかったのは判断の結果。
+        #
+        # NONE の代償: 署名検証が無いぶん、無認証リクエストでも Lambda が
+        # 起動して課金され、SSM 呼び出しまで到達する。AWS_IAM なら AWS 側で
+        # 弾かれ関数は起動しない。移行の検討記録は
+        # doc/steps/03-database.md の「4-3」にある。
         AuthType: NONE
         # CORS は設定しない。本番は Pages Functions 経由の同一オリジンで、
         # ブラウザから Function URL を直接叩くことはない。

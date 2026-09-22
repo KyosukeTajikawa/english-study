@@ -36,6 +36,23 @@ export function isValidInternalKey(
 }
 
 /**
+ * ヘッダが存在するかだけを見る。値が正しいかは検証しない。
+ *
+ * router.ts が SSM から期待値を取得する「前」に呼ぶ。ヘッダを持たない
+ * リクエストをここで落とせば、無差別攻撃で SSM の呼び出しを消費させられない。
+ * SSM にはアカウント単位のスループット上限があり、使い切ると正規の
+ * リクエストまで期待値を取得できずに失敗する（攻撃が可用性に波及する）。
+ *
+ * ★ これは負荷対策であって認証ではない。通過したリクエストは必ず
+ * isValidInternalKey() で検証すること。
+ */
+export function hasInternalKeyHeader(
+  headers: Record<string, string | undefined>,
+): boolean {
+  return findHeader(headers, HEADER_NAME) !== undefined;
+}
+
+/**
  * ヘッダ名の大文字小文字を無視して取得する。
  * Lambda Function URL はヘッダ名を小文字化して渡すが、
  * ローカルの HTTP サーバー経由では揺れうるため正規化する。
