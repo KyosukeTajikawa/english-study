@@ -200,10 +200,23 @@ API は相対パス `/api` を叩くため、ベース URL の設定は不要。
 
 | 変数 | 説明 |
 | --- | --- |
-| `LAMBDA_FUNCTION_URL` | 中継先の Lambda Function URL |
+| `LAMBDA_FUNCTION_URL` | 中継先の Lambda Function URL。署名に使うリージョンはこのホスト名から導出するので、リージョンの変数は持たない |
 | `INTERNAL_API_KEY` | Lambda と同じ値 |
+| `AWS_ACCESS_KEY_ID` | SigV4 署名用。通常の変数でよい（公開前提の識別子） |
+| `AWS_SECRET_ACCESS_KEY` | **★ Secret タイプで登録する。** ネットワークには一度も流れない |
 
 共有シークレットは `openssl rand -hex 32` で生成する。
+
+AWS のアクセスキーは、`lambda/template.yaml` が作る IAM ユーザー（スタックの
+Outputs `RelayIamUserName`）に対して発行する。権限は**この関数の
+`lambda:InvokeFunctionUrl` 1つだけ**に絞られている。
+
+```bash
+aws iam create-access-key --user-name <RelayIamUserName の値>
+```
+
+**このユーザーの権限を広げないこと。** 広げると、鍵が漏れたときの被害が
+`INTERNAL_API_KEY` の漏洩より大きくなり、SigV4 を入れた意味が失われる。
 
 Web Push の鍵は以下で生成できる。
 

@@ -24,13 +24,15 @@ Parameters:
     Type: Number
     Default: 0
     Description: >-
-      同時実行数の上限。Function URL は AuthType NONE で公開されるため、
-      無認証リクエストでも Lambda は起動し課金される。ここで最悪ケースの
-      コストに天井を設ける。
-      ただし共有シークレットの検証は Lambda 起動「後」に走るため、この枠は
-      無認証リクエストでも消費される = 低すぎる値は自ら DoS 経路を作る
-      （数件の並行リクエストで正規利用がスロットリングされる）。
-      コストと可用性のトレードオフ。想定同時利用者数に対し十分な余裕を取ること。
+      同時実行数の上限。最悪ケースのコストに天井を設ける。
+
+      ★ AuthType: AWS_IAM にしたため、署名の無いリクエストは AWS 側で
+      弾かれ関数は起動しない。この枠を無認証リクエストに食い潰される
+      経路は無くなった（NONE だった頃の主な懸念はこれだった）。
+      残る守備範囲は、署名を持つ正規経路が暴走した場合だけ
+      （フロントのバグによる連打、Pages 側の異常）。
+      それでも低すぎる値は正規利用のスロットリングを招くため、
+      想定同時利用者数に対し十分な余裕を取ること。
 
       ★ 0 を指定すると予約しない（既定）。
       新規 AWS アカウントは同時実行数の上限が 10 に制限されており、AWS は
@@ -131,18 +133,18 @@ Resources:
         # 「無期限保持」になり、無料枠 5GB を少しずつ食い潰す。
         LogGroup: !Ref ApiLogGroup
       FunctionUrlConfig:
-        # 現状は X-Internal-Api-Key（router.ts で全ルート共通に検証）で守る。
+        # ★ 署名の無いリクエストは AWS 側で 403 になり、関数は起動しない。
+        # NONE だと無認証リクエストでも Lambda が起動して課金され、
+        # router.ts が SSM を呼ぶところまで到達していた。
         #
-        # ★ 注意: 「ブラウザから叩くので IAM 署名は使えない」わけではない。
-        # 署名するのはブラウザではなく Pages Functions（サーバー側）で、
-        # Workers の WebCrypto には HMAC-SHA256 があるため SigV4 は実装できる。
-        # AuthType: AWS_IAM は技術的に選択可能で、選ばなかったのは判断の結果。
+        # 署名するのはブラウザではなく Cloudflare Pages Functions（サーバー側）。
+        # Workers の WebCrypto に HMAC-SHA256 があるため SigV4 を実装できる。
+        # 実装は functions/api/[[path]].ts、判断の記録は
+        # doc/steps/03-database.md の「4-3」。
         #
-        # NONE の代償: 署名検証が無いぶん、無認証リクエストでも Lambda が
-        # 起動して課金され、SSM 呼び出しまで到達する。AWS_IAM なら AWS 側で
-        # 弾かれ関数は起動しない。移行の検討記録は
-        # doc/steps/03-database.md の「4-3」にある。
-        AuthType: NONE
+        # これは Lambda 側の二段認証（X-Internal-Api-Key → JWT）を置き換える
+        # ものではなく、その手前に足す一段。IAM の誤設定に備えて両方残す。
+        AuthType: AWS_IAM
         # CORS は設定しない。本番は Pages Functions 経由の同一オリジンで、
         # ブラウザから Function URL を直接叩くことはない。
         # そもそも CORS はブラウザにしか効かず、直接アクセスの防御にならない。
@@ -155,6 +157,45 @@ Resources:
       # 保存量が青天井に増えるのを防ぐ。
       RetentionInDays: 14
 
+  # ── Cloudflare Pages Functions が SigV4 署名に使う IAM ユーザー ──
+  #
+  # ★ アクセスキーはここで作らない。
+  # AWS::IAM::AccessKey を使うと、シークレットアクセスキーが
+  # CloudFormation スタックに保存され、GetAtt で読み出せる状態になる。
+  # lib/secrets.ts が Lambda の環境変数を避けたのと同じ理由で避ける。
+  #
+  # 手順（デプロイ後に一度だけ、手動で行う）:
+  #   1. aws iam create-access-key --user-name <このユーザー名>
+  #      （ユーザー名は Outputs の RelayIamUserName に出る）
+  #   2. 出力された AccessKeyId と SecretAccessKey を Cloudflare Pages の
+  #      環境変数に登録する
+  #        AWS_ACCESS_KEY_ID      … 通常の変数でよい（公開前提の識別子）
+  #        AWS_SECRET_ACCESS_KEY  … ★ Secret 型（暗号化・表示不可）で登録
+  #   3. SecretAccessKey は手元に残さない（再表示できないので、
+  #      失った場合は古いキーを削除して作り直す）
+  #
+  # 権限はこの関数の InvokeFunctionUrl 1つだけに絞ってある。
+  # ここを広げると、鍵が漏れたときの被害が X-Internal-Api-Key の漏洩より
+  # 大きくなる（SigV4 を導入した意味が失われる）。
+  RelayIamUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub "${AWS::StackName}-relay"
+      Policies:
+        - PolicyName: InvokeApiFunctionUrlOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunctionUrl
+                Resource: !GetAtt ApiFunction.Arn
+                Condition:
+                  StringEquals:
+                    # 署名なしでの呼び出しを、ポリシー側でも拒否する。
+                    # FunctionUrlConfig の AuthType を誤って NONE に戻しても、
+                    # このユーザー経由の経路は IAM 認証のままになる。
+                    lambda:FunctionUrlAuthType: AWS_IAM
+
 Outputs:
   ApiFunctionUrl:
     Description: >-
@@ -165,3 +206,10 @@ Outputs:
   ApiFunctionArn:
     Description: API 関数の ARN
     Value: !GetAtt ApiFunction.Arn
+
+  RelayIamUserName:
+    Description: >-
+      Pages Functions の署名用 IAM ユーザー名。
+      aws iam create-access-key --user-name <この値> でアクセスキーを作り、
+      Cloudflare Pages の環境変数に登録する（AWS_SECRET_ACCESS_KEY は Secret 型）。
+    Value: !Ref RelayIamUser

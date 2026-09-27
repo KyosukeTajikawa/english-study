@@ -53,7 +53,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 実装時の必須ルール
 
-1. **HTTP ハンドラは認証を2段で通す。** `router.ts` での `X-Internal-Api-Key` 検証 → `getAuthenticatedUser()`（JWT）の順。Function URL は公開されているので省略不可
+1. **HTTP ハンドラは認証を3段で通す。** ① Function URL の `AuthType: AWS_IAM`（AWS が SigV4 署名を検証。**ここで落ちれば Lambda は起動しない**）→ ② `router.ts` での `X-Internal-Api-Key` 検証 → ③ `getAuthenticatedUser()`（JWT）の順。①があっても②③を省略しない（IAM 誤設定時の保険）。署名は `functions/api/[[path]].ts` が付ける
 2. **バッチハンドラ（`cron-*.ts`）は例外。** EventBridge からのみ起動し JWT を持たない。代わりに **Function URL を持たないこと**で守る。`getAuthenticatedUser()` を入れようとしないこと
 3. **API は `router.ts` に登録する。** Lambda Function URL はパス振り分けを持たない。`template.yaml` にルートを書く場所はない
 4. **DB クエリは必ず `userId` スコープを通す。** リポジトリ関数は第1引数に `db`、第2引数に `userId` を取る（`getVocabulary(db, userId, id)`）。ID だけで引く関数を作らない
