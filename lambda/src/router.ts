@@ -1,5 +1,5 @@
 import type { LambdaFunctionURLEvent, LambdaFunctionURLResult } from "aws-lambda";
-import { isValidInternalKey } from "./lib/internal-auth.js";
+import { hasInternalKeyHeader, isValidInternalKey } from "./lib/internal-auth.js";
 import { getSecret } from "./lib/secrets.js";
 import { fail } from "./lib/response.js";
 import { handleHealth } from "./handlers/health.js";
@@ -49,6 +49,13 @@ const ROUTES: Route[] = [
 
 export async function route(event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLResult> {
   const headers = normalizeHeaders(event.headers);
+
+  // ヘッダが無いリクエストは、期待値を取得する前にここで落とす。
+  // SSM に触れずに済むため、無差別攻撃でスループット上限を消費させられない。
+  // 応答は下の不一致時と同一にし、ヘッダの有無を区別させない。
+  if (!hasInternalKeyHeader(headers)) {
+    return fail(403, "アクセスが拒否されました。");
+  }
 
   // 共有シークレットの検証を全ルート共通で最初に行う。
   // JWT 検証（ステップ3）より前に置き、失敗したら DB にも Gemini にも触れない。

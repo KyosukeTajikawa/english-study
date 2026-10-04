@@ -116,14 +116,14 @@ AWS SAM CLI のインストールが必要（`brew install aws-sam-cli`）。AWS
 - リージョンは **`ap-northeast-1`（東京）**。Gemini のリージョン制限を回避するため必須
 - ランタイムは **`nodejs22.x`**（`nodejs20.x` は 2026-04-30 に廃止済み）
 - **Lambda Function URL** を使う（API Gateway ではない）。Function URL に追加料金はかからない
-- `AuthType` は **`NONE`**（ブラウザから Cloudflare 経由で叩くため IAM 署名を使えない）。**その代わり下記の共有シークレットで守る**
-- **`ReservedConcurrentExecutions` を設定する**（例: 5）。`AuthType: NONE` の URL はフラッド攻撃を受けうる。共有シークレットの検証は **Lambda が起動した後**に走るので、認可に失敗しても**呼び出し課金は発生する**。同時実行数に天井を設けてコストの最悪ケースを抑える
+- `AuthType` は **`AWS_IAM`**。署名の無いリクエストは AWS 側で 403 になり、**関数は起動しない**（課金されない）。署名は Cloudflare Pages Functions が SigV4 で付ける（ブラウザではないので実装できる）。判断の記録は `doc/steps/03-database.md` の 4-3
+- **`ReservedConcurrentExecutions`**（例: 5）。`AWS_IAM` にしたため無認証リクエストに枠を食われることは無くなった。守るのは、署名を持つ正規経路が暴走した場合（フロントのバグによる連打など）だけ
 - **シークレットのリテラル値を書かない。** 本番は Secrets Manager / SSM の動的参照を使う
 - IAM は最小権限にする（SAM の既定のまま広い権限にしない）
 
 #### ★ 共有シークレットで直叩きを防ぐ
 
-`AuthType: NONE` の Function URL は、**Cloudflare を経由せず誰でも直接叩ける。** JWT 検証だけに頼ると、JWT が何らかの経路で漏れた場合に Cloudflare 側のポリシーも WAF も一切効かないバイパス経路になる。
+`AWS_IAM` で署名の無い直叩きは AWS 側で止まる。それでも共有シークレットは**残す**。IAM ポリシーや `AuthType` を誤って緩めた場合の保険であり、JWT が漏れた場合に Cloudflare のポリシーも WAF も効かないバイパス経路を作らないためでもある。
 
 そこで多層防御として:
 
@@ -247,6 +247,7 @@ Cloudflare Access の Cookie がブラウザから自動で送られるように
 
 - [ ] `npm run dev` で開発サーバーが動く
 - [ ] `npm run build` で `out/` が生成される
+- [ ] **Function URL を署名なしで直叩きすると 403**（`AuthType: AWS_IAM` が効いている。CloudWatch にログが出ない）
 - [ ] Cloudflare Pages にデプロイした URL が表示される
 - [ ] **未ログインでアクセスするとログイン画面が出る**（カスタムドメイン・本番 `pages.dev`・プレビュー URL の3つすべて）
 - [ ] ログイン後、画面が表示される

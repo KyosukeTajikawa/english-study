@@ -177,6 +177,142 @@ getAuthenticatedUser(event) → { userId, email }
 - 比較は**定数時間**で行う（`crypto.timingSafeEqual`）。長さが違う場合も一定時間で失敗させる
 - 不一致なら 403 を返し、DB にも Gemini にも触れずに終了する
 
+### 4-3. ★ Function URL は `AuthType: AWS_IAM`（決定済み）
+
+**Function URL は `AWS_IAM` にし、Cloudflare Pages Functions が SigV4 署名を付ける。**
+署名の無いリクエストは AWS 側で 403 になり、**Lambda は起動しない。**
+
+```
+署名なしの攻撃 → Function URL → AWS が署名を検証 → 403
+                                 ★関数は起動しない = 課金ゼロ
+
+正規のリクエスト → Pages Functions（SigV4 署名を付ける）
+                    → Function URL → AWS が検証 → Lambda 起動
+                      → router.ts が X-Internal-Api-Key を検証
+                        → getAuthenticatedUser() が JWT を検証
+```
+
+#### なぜ変えたか
+
+`AuthType: NONE` では、共有シークレットを持たないリクエストでも**関数が起動してから**弾かれていた。結果として、
+
+- Lambda のリクエスト課金とコンピュート課金が発生する
+- コールドスタートのたびに SSM を呼ぶため、**SSM のスループット上限を
+  食い潰し、正規のリクエストまで期待値を取得できなくなる**（可用性に波及）
+
+`ReservedConcurrentExecutions` はコストの天井にはなるが、低くすると自ら
+スロットリングを招くため根本解決にならなかった。
+
+なお `template.yaml` には長らく「ブラウザから Pages Functions 経由で叩くため
+IAM 署名は使えない」と書かれていたが、**これは誤り**だった。署名するのは
+ブラウザではなく Pages Functions（サーバー側）であり、Workers の WebCrypto に
+HMAC-SHA256 があるため SigV4 は実装できる。
+
+#### 実装
+
+| 場所 | 内容 |
+| --- | --- |
+| `lambda/template.yaml` | `AuthType: AWS_IAM`。署名用の IAM ユーザー `RelayIamUser` を定義 |
+| `functions/api/[[path]].ts` | `aws4fetch` で署名して転送 |
+| Cloudflare Pages の環境変数 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`（後者は Secret 型） |
+
+**アクセスキーは CloudFormation で作らない。** `AWS::IAM::AccessKey` を使うと
+シークレットがスタックに保存され読み出せてしまう（`lib/secrets.ts` が Lambda の
+環境変数を避けたのと同じ理由）。手動で `aws iam create-access-key` する。
+
+IAM ユーザーの権限は**この関数の `lambda:InvokeFunctionUrl` 1つだけ**。
+`lambda:FunctionUrlAuthType: AWS_IAM` の条件も付けてあり、`AuthType` を誤って
+`NONE` に戻してもこのユーザー経由の経路は IAM 認証のままになる。
+
+**ここを広げると、鍵が漏れたときの被害が `INTERNAL_API_KEY` の漏洩より大きくなり、
+SigV4 を入れた意味が失われる。**
+
+#### `aws4fetch` を選んだ根拠（実測）
+
+| 確認項目 | 結果 |
+| --- | --- |
+| 依存パッケージ | **ゼロ**（バンドル 11KB） |
+| AWS SDK（`@smithy/signature-v4`）との署名一致 | **6ケース全一致**（URLエンコード済みパス、記号入りクエリ、クエリ順序、末尾スラッシュを含む） |
+| 署名キーのキャッシュ | 内蔵（`Map`、キーは `secret, date, region, service`） |
+| 署名1回のコスト | **0.25〜0.31ms**（Node の WebCrypto 実測。10ms 予算の約3%） |
+| キャッシュ無効時 | 0.49ms（約2倍）→ `AwsClient` はモジュールスコープで使い回す |
+
+`env` はリクエストごとにしか渡らないためモジュールスコープで初期化できない。
+初回リクエストで作って以降キャッシュする実装にしてある。
+
+> 上記は Node の WebCrypto での計測。本番の CPU 時間は
+> Cloudflare の Workers Analytics で確認すること（`wrangler pages dev` は
+> CPU 時間を報告しない）。
+
+#### ★ リクエストボディをストリームできなくなった
+
+SigV4 は本文の SHA-256 を署名に含めるため、署名前に本文を読み切る必要がある。
+`duplex: "half"` によるストリーム転送は使えない。
+
+その結果 CPU が本文サイズに比例するようになったので、
+**`MAX_REQUEST_BODY_BYTES = 128 * 1024` で上限を設けた**（`content-length` で
+先に弾き、無い場合は読み切った後のバイト数で判定。超えたら 413）。
+
+このアプリで上りに乗る最大は単語登録フォームの数 KB なので余裕は十分ある。
+**将来「単語の一括インポート」を作るなら、上限を上げる前に CPU を実測すること**
+（512KB で予算の約14%を使う）。
+
+なおレスポンスは署名対象ではないため、**下りは従来どおり素通しのまま**。
+「毎日10問」のデータ量は署名コストに影響しない（そもそも
+`doc/steps/08-daily-review.md` の設計で1問ずつ返す）。
+
+#### ローカル開発
+
+`wrangler pages dev` で本番と同じ中継経路を確認するため、転送先が
+ループバック（`127.0.0.1` / `localhost` / `[::1]`）の場合も許可している。
+
+**これは認証の迂回ではない。** 署名処理は本番と同じ経路を通り、
+`X-Internal-Api-Key` も JWT も同様に要求される。違うのは転送先のホストの形だけで、
+検証を省く分岐はどこにも無い（`index.ts` の設計思想を維持している）。
+
+ループバック宛ての署名には**実在しないリージョン `local`** を使う。
+`local-server.ts` は署名を検証しないので値は何でもよいが、実在するリージョン名に
+すると設定を取り違えたときに本物の AWS へ有効な署名を送れてしまうため、
+意図的に通らない値にしてある。
+
+`.dev.vars` にはダミーの AWS 認証情報を入れる（空だと設定漏れとして 500 になる）。
+
+#### 検証済みの挙動（`wrangler pages dev` + スタブ上流で実測）
+
+- JWT 無し → 401（Lambda に到達しない）
+- JWT あり → 200。`Authorization: AWS4-HMAC-SHA256 ...` が上流に届く
+- `SignedHeaders` に `x-internal-api-key` と `cf-access-jwt-assertion` が含まれる
+  （既存の合言葉が署名で保護される）
+- クライアントが偽の `X-Internal-Api-Key` を送っても、上流には**本物だけ**が届く
+  （ヘッダを複製せず組み立て直しているため）
+- 許可リスト外のヘッダは転送されない
+- 200KB の本文 → 413、100KB → 200
+- `/api/a/b/c?x=1&y=2` のような未知のパスとクエリも正しく転送される
+
+#### 転送先のホスト名を検証している
+
+`LAMBDA_FUNCTION_URL` が `<id>.lambda-url.<region>.on.aws` の形（またはループバック）
+でなければ 500 で止める。検証しないと、誤設定で JWT と共有シークレットを無関係な
+ホストへ送ってしまう。
+
+署名に使うリージョンは**このホスト名から導出する。** 別の環境変数にすると URL と
+リージョンが食い違う誤設定を作れてしまい、本番で原因の分かりにくい 403 になる。
+
+#### 独立して必要なこと
+
+**AWS Budgets のアラートを設定する。** 異常課金に気づけないことは、
+どの認証方式を選んでも解決しない。
+
+#### 採用しなかった案
+
+**IP 制限**（Cloudflare の IP 範囲のみ許可）も Lambda 起動前に弾ける。CPU ゼロ、
+AWS キー不要という利点があったが、
+
+- Cloudflare の**他の利用者**からは到達できる（自分の Worker だけを識別できない）
+- IP 範囲の更新を忘れると障害になる
+
+長期運用では「権限を絞った AWS キーを1本預ける」ほうが保守が要らないと判断した。
+
 ### 5. 型の共有
 
 **置き場所を役割で分ける。** 曖昧にすると同じ制約が2箇所に分岐する。
@@ -228,6 +364,13 @@ npm run db:seed                         # 開発用データ
 - [ ] シードが流せ、再実行しても壊れない
 - [ ] **JWT が不正・欠落・`aud` 違い・`iss` 違いの場合に 401 が返る**
 - [ ] **`X-Internal-Api-Key` がない／不一致なら 403 が返る**（JWT より前に弾かれる）
+- [ ] **ヘッダが無いリクエストで SSM が呼ばれない**（`hasInternalKeyHeader()` が先に落とす。4-3 参照）
+- [ ] **Function URL を署名なしで直叩きすると 403 が返り、Lambda が起動しない**（CloudWatch にログが出ないことで確認する。4-3 参照）
+- [ ] **Pages Functions 経由なら 200 が返る**（SigV4 署名が AWS の検証を通っている）
+- [ ] **`AWS_SECRET_ACCESS_KEY` が Pages の Secret タイプで登録されている**（管理画面で値が表示されない）
+- [ ] **署名用 IAM ユーザーの権限がこの関数の `InvokeFunctionUrl` のみ**である
+- [ ] 128KB を超えるリクエストボディが 413 で拒否される
+- [ ] **本番の CPU 時間を Workers Analytics で確認した**（署名の追加分が 10ms 予算に収まっている）
 - [ ] 正しい JWT でアクセスすると `User` が自動で作られる
 - [ ] 同じメールで2回アクセスしても `User` が重複しない（upsert がべき等）
 

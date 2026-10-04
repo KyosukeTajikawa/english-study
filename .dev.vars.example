@@ -2,14 +2,32 @@
 #
 # このファイルはコミットする。実際の値は .dev.vars に書く（.gitignore 済み）。
 # 本番の値は Cloudflare Pages の管理画面で設定する。
-# INTERNAL_API_KEY は Secret タイプ（暗号化・表示不可）で登録すること。
+# シークレット扱いのものは Secret タイプ（暗号化・表示不可）で登録すること。
 
 # 中継先の Lambda。ローカルでは lambda/src/local-server.ts のアドレス。
+#
+# 本番では Function URL（https://<id>.lambda-url.<region>.on.aws）を入れる。
+# 署名に使うリージョンはこのホスト名から導出されるので、リージョンを別の
+# 環境変数で指定する必要はない（指定できるようにすると食い違う）。
 LAMBDA_FUNCTION_URL=http://127.0.0.1:3001
 
 # Lambda 側の lambda/.env と同じ値にすること。
 # 生成: openssl rand -hex 32
 INTERNAL_API_KEY=
+
+# --- SigV4 署名用（Function URL は AuthType: AWS_IAM）---
+#
+# 本番: lambda/template.yaml が作る IAM ユーザー（Outputs の RelayIamUserName）の
+#       アクセスキーを入れる。作成手順は template.yaml のコメントを参照。
+#         aws iam create-access-key --user-name <RelayIamUserName の値>
+#       ★ AWS_SECRET_ACCESS_KEY は Pages の管理画面で Secret タイプで登録する。
+#
+# ローカル: local-server.ts は署名を検証しないので、ダミーで構わない。
+#           ただし空にはしないこと（未設定は設定漏れとして 500 になる）。
+#           ループバック宛ての署名は実在しないリージョン "local" で作られるため、
+#           取り違えても本物の AWS では通らない。
+AWS_ACCESS_KEY_ID=AKIALOCALDUMMYKEY0000
+AWS_SECRET_ACCESS_KEY=local-dummy-secret-not-used-by-local-server
 
 # --- ステップ4以降で使う ---
 #
