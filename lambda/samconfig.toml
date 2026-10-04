@@ -12,7 +12,13 @@ cached = true
 # ★ 東京。Gemini API のリージョン制限のため変更しないこと。
 region = "ap-northeast-1"
 # Lambda の実行ロールを SAM に作らせるために必要。
-capabilities = "CAPABILITY_IAM"
+#
+# ★ NAMED_IAM も要る。template.yaml の RelayIamUser は UserName を明示した
+#   「名前付き IAM リソース」で、CAPABILITY_IAM だけでは CloudFormation が
+#   InsufficientCapabilities で拒否する（デプロイが失敗する）。
+#   名前を明示しているのは、アクセスキーの発行手順で人がユーザー名を
+#   指定するため。自動生成名にするとスタックを作り直すたびに変わる。
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
 # デプロイ用の S3 バケットを AWS 側に自動作成・再利用させる。
 resolve_s3 = true
 confirm_changeset = false
