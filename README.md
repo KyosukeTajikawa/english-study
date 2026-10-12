@@ -208,8 +208,9 @@ API は相対パス `/api` を叩くため、ベース URL の設定は不要。
 共有シークレットは `openssl rand -hex 32` で生成する。
 
 AWS のアクセスキーは、`lambda/template.yaml` が作る IAM ユーザー（スタックの
-Outputs `RelayIamUserName`）に対して発行する。権限は**この関数の
-`lambda:InvokeFunctionUrl` 1つだけ**に絞られている。
+Outputs `RelayIamUserName`）に対して発行する。権限は**この関数を
+Function URL 経由で呼ぶことだけ**（`lambda:InvokeFunctionUrl` と、
+`lambda:InvokedViaFunctionUrl` の条件付きの `lambda:InvokeFunction`）に絞られている。
 
 ```bash
 aws iam create-access-key --user-name <RelayIamUserName の値>

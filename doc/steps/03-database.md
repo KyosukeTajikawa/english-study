@@ -220,9 +220,20 @@ HMAC-SHA256 があるため SigV4 は実装できる。
 シークレットがスタックに保存され読み出せてしまう（`lib/secrets.ts` が Lambda の
 環境変数を避けたのと同じ理由）。手動で `aws iam create-access-key` する。
 
-IAM ユーザーの権限は**この関数の `lambda:InvokeFunctionUrl` 1つだけ**。
+IAM ユーザーの権限は**この関数を Function URL 経由で呼ぶことだけ**。
 `lambda:FunctionUrlAuthType: AWS_IAM` の条件も付けてあり、`AuthType` を誤って
 `NONE` に戻してもこのユーザー経由の経路は IAM 認証のままになる。
+
+| アクション | 条件 | 理由 |
+| --- | --- | --- |
+| `lambda:InvokeFunctionUrl` | `lambda:FunctionUrlAuthType: AWS_IAM` | Function URL を呼ぶ権限 |
+| `lambda:InvokeFunction` | `lambda:InvokedViaFunctionUrl: "true"` | 2025年10月以降に作られた Function URL は**これも要求する** |
+
+**`InvokeFunctionUrl` だけでは 403 になる。** 本番で実際に、中継は正常に動いたうえで
+AWS が `{"Message":"Forbidden. For troubleshooting Function URL authorization issues, ..."}`
+を返した（関数は起動しない）。このメッセージは英語で、自前のエラー（日本語）と
+区別できる。`InvokeFunction` には `InvokedViaFunctionUrl` の条件を付け、
+Function URL を通らない直接の Invoke API には使えないようにしている。
 
 **ここを広げると、鍵が漏れたときの被害が `INTERNAL_API_KEY` の漏洩より大きくなり、
 SigV4 を入れた意味が失われる。**
@@ -368,7 +379,7 @@ npm run db:seed                         # 開発用データ
 - [ ] **Function URL を署名なしで直叩きすると 403 が返り、Lambda が起動しない**（CloudWatch にログが出ないことで確認する。4-3 参照）
 - [ ] **Pages Functions 経由なら 200 が返る**（SigV4 署名が AWS の検証を通っている）
 - [ ] **`AWS_SECRET_ACCESS_KEY` が Pages の Secret タイプで登録されている**（管理画面で値が表示されない）
-- [ ] **署名用 IAM ユーザーの権限がこの関数の `InvokeFunctionUrl` のみ**である
+- [ ] **署名用 IAM ユーザーの権限がこの関数の `InvokeFunctionUrl` と、Function URL 経由に限定した `InvokeFunction` のみ**である
 - [ ] 128KB を超えるリクエストボディが 413 で拒否される
 - [ ] **本番の CPU 時間を Workers Analytics で確認した**（署名の追加分が 10ms 予算に収まっている）
 - [ ] 正しい JWT でアクセスすると `User` が自動で作られる

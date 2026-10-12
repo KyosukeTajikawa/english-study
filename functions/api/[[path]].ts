@@ -28,7 +28,7 @@ interface Env {
   LAMBDA_FUNCTION_URL: string;
   /** Lambda と共有するシークレット。Lambda 側で最初に検証される。 */
   INTERNAL_API_KEY: string;
-  /** SigV4 署名用。`lambda:InvokeFunctionUrl` のみを持つ IAM ユーザーの鍵。 */
+  /** SigV4 署名用。この関数を Function URL 経由で呼ぶ権限だけを持つ IAM ユーザーの鍵。 */
   AWS_ACCESS_KEY_ID: string;
   /** ★ Secret 型で登録する（表示不可）。ネットワークには一度も流れない。 */
   AWS_SECRET_ACCESS_KEY: string;
