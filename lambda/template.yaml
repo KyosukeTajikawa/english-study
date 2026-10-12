@@ -162,7 +162,16 @@ Resources:
   #   3. SecretAccessKey は手元に残さない（再表示できないので、
   #      失った場合は古いキーを削除して作り直す）
   #
-  # 権限はこの関数の InvokeFunctionUrl 1つだけに絞ってある。
+  # 権限は「この関数を Function URL 経由で呼ぶこと」だけに絞ってある。
+  #
+  # ★ InvokeFunctionUrl だけでは足りない。2025年10月以降に作られた
+  #   Function URL は lambda:InvokeFunction も要求する（無いと AWS が
+  #   "Forbidden. For troubleshooting Function URL authorization issues" の
+  #   403 を返し、関数は起動しない。本番で実際にこれが起きた）。
+  #   https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html
+  #   InvokeFunction には lambda:InvokedViaFunctionUrl の条件を付け、
+  #   Function URL を通らない直接の Invoke API には使えないようにしている。
+  #
   # ここを広げると、鍵が漏れたときの被害が X-Internal-Api-Key の漏洩より
   # 大きくなる（SigV4 を導入した意味が失われる）。
   RelayIamUser:
@@ -183,6 +192,15 @@ Resources:
                     # FunctionUrlConfig の AuthType を誤って NONE に戻しても、
                     # このユーザー経由の経路は IAM 認証のままになる。
                     lambda:FunctionUrlAuthType: AWS_IAM
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt ApiFunction.Arn
+                Condition:
+                  Bool:
+                    # Function URL 経由の呼び出しに限る。鍵が漏れても、
+                    # Invoke API で URL（と Access・中継）を迂回して直接
+                    # 起動することはできない。
+                    lambda:InvokedViaFunctionUrl: "true"
 
 Outputs:
   ApiFunctionUrl:
