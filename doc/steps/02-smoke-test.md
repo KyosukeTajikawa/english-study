@@ -266,20 +266,20 @@ Cloudflare Access の Cookie がブラウザから自動で送られるように
 
 このステップはインフラ設定のため自動テストは書かない。手動で確認する。
 
-- [ ] `npm run dev` で開発サーバーが動く
-- [ ] `npm run build` で `out/` が生成される
-- [ ] **Function URL を署名なしで直叩きすると 403**（`AuthType: AWS_IAM` が効いている。CloudWatch にログが出ない）
-- [ ] Cloudflare Pages にデプロイした URL が表示される
-- [ ] **未ログインでアクセスするとログイン画面が出る**（本番 `pages.dev`・プレビュー URL。カスタムドメインは使わない方針のため対象外）
-- [ ] ログイン後、画面が表示される
-- [ ] `/api/health` を叩くと Lambda のレスポンスが返る
-- [ ] **Lambda から Gemini を呼べる**
-- [ ] Lambda のログに `cf-access-jwt-assertion` が届いている
-- [ ] **Function URL を直接叩くと 403 になる**（`X-Internal-Api-Key` がないため）
-- [ ] 偽造した `cf-access-jwt-assertion` の扱いを**実測して記録した**（除去されなくても可。防御の本体は署名検証）
-- [ ] `router.ts` が未定義パスに 404、メソッド違いに 405 を返す（**`X-Internal-Api-Key` を付けた状態で確認する**。付けないと必ず 403 になる）
-- [ ] `npm run build` と `npm run lint` が、`lambda/` 作成後も通る（tsconfig / ESLint のスコープ設定が効いている）
-- [ ] AWS アカウントが Free Plan か Paid Plan かを確認した
+- [x] `npm run dev` で開発サーバーが動く
+- [x] `npm run build` で `out/` が生成される
+- [x] **Function URL を署名なしで直叩きすると 403**（`AuthType: AWS_IAM` が効いている。CloudWatch にログが出ない）
+- [x] Cloudflare Pages にデプロイした URL が表示される
+- [x] **未ログインでアクセスするとログイン画面が出る**（本番 `pages.dev`・プレビュー URL。カスタムドメインは使わない方針のため対象外）
+- [x] ログイン後、画面が表示される
+- [x] `/api/health` を叩くと Lambda のレスポンスが返る
+- [x] **Lambda から Gemini を呼べる**
+- [x] Lambda のログに `cf-access-jwt-assertion` が届いている
+- [x] **Function URL を直接叩くと 403 になる**（`X-Internal-Api-Key` がないため）
+- [x] 偽造した `cf-access-jwt-assertion` の扱いを**実測して記録した**（除去されなくても可。防御の本体は署名検証）
+- [x] `router.ts` が未定義パスに 404、メソッド違いに 405 を返す（**`X-Internal-Api-Key` を付けた状態で確認する**。付けないと必ず 403 になる）
+- [x] `npm run build` と `npm run lint` が、`lambda/` 作成後も通る（tsconfig / ESLint のスコープ設定が効いている）
+- [x] AWS アカウントが Free Plan か Paid Plan かを確認した
 
 ## 完了条件 (DoD)
 
