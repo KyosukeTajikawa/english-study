@@ -7,21 +7,33 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "prisma generate && tsc --noEmit",
     "lint": "eslint .",
-    "build": "PATH=\"$PWD/node_modules/.bin:$PATH\" sam build",
-    "deploy": "sam deploy"
+    "generate": "prisma generate",
+    "bundle": "prisma generate && node scripts/bundle.mjs",
+    "build": "sam build",
+    "deploy": "sam deploy",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "prisma db seed"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@types/aws-lambda": "^8.10.163",
     "@types/node": "^22.19.0",
+    "@types/ws": "8.18.2",
     "esbuild": "^0.27.0",
     "eslint": "^9.39.1",
+    "prisma": "7.10.0",
+    "tsx": "4.23.15",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.47.0"
   },
   "dependencies": {
-    "@aws-sdk/client-ssm": "^3.1136.0"
+    "@aws-sdk/client-ssm": "^3.1136.0",
+    "@neondatabase/serverless": "1.2.0",
+    "@prisma/adapter-neon": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "jose": "6.2.13",
+    "ws": "8.22.0"
   }
 }

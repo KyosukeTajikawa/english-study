@@ -1,0 +1,150 @@
+// データモデル定義（doc/steps/03-database.md の「2. スキーマ」）。
+//
+// ★ 接続先 URL はここに書かない。Prisma 7 では datasource の url は
+//   prisma.config.ts に置く（schema.prisma に書くと P1012 になる）。
+
+generator client {
+  // prisma-client-js は将来削除される。Prisma 7 の新しい generator を使う。
+  provider            = "prisma-client"
+  // ★ Prisma 7 は node_modules に生成しない。src/ 配下に出し、
+  //   sam build の esbuild が通常の import としてバンドルに取り込めるようにする。
+  //   生成物は Git 管理外（.gitignore）。build スクリプトが毎回生成し直す。
+  output              = "../src/generated/prisma"
+  // Lambda は CommonJS でバンドルしている（template.yaml 参照）。
+  // ESM のまま生成すると import.meta.url を使うコードが混ざり、CJS 出力で壊れる。
+  moduleFormat        = "cjs"
+  // Lambda 側の import は ESM 規約で .js 拡張子を付けている。生成物も揃える。
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// 認証されたユーザー。Cloudflare Access の JWT の email で識別する。
+model User {
+  id               String   @id @default(cuid())
+  email            String   @unique
+  /// IANA タイムゾーン名。通知時刻と「その日」の判定に使う。
+  timezone         String   @default("Asia/Tokyo")
+  /// 通知時刻（HH:mm）。毎正時のみ受け付ける（ステップ9）。
+  notificationTime String   @default("06:00")
+  /// 通知の二重送信防止。ユーザーのタイムゾーンでの YYYY-MM-DD。
+  lastNotifiedDate String?
+  createdAt        DateTime @default(now())
+
+  vocabularies      Vocabulary[]
+  attempts          Attempt[]
+  dailySets         DailySet[]
+  pushSubscriptions PushSubscription[]
+  rateLimits        RateLimit[]
+}
+
+/// 登録した単語・イディオム。★ 論理削除（deletedAt）。物理削除すると学習履歴が失われる。
+model Vocabulary {
+  id                      String    @id @default(cuid())
+  userId                  String
+  word                    String
+  /// word / idiom。Question.format と混同しないよう type という名前にしない。
+  wordType                String
+  meaning                 String
+  coreImage               String?
+  examples                Json
+  /// どこで見聞きしたか（任意）
+  source                  String?
+  /// 生成の連続失敗回数。繰り返し失敗する単語を夜間バッチの対象から外す。
+  generationFailCount     Int       @default(0)
+  lastGenerationAttemptAt DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  deletedAt               DateTime?
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questions Question[]
+
+  @@index([userId, deletedAt])
+}
+
+/// Gemini が生成した出題。
+/// ★ userId を持たない唯一のモデル。取得時は必ず vocabulary: { userId } で絞る。
+model Question {
+  id           String    @id @default(cuid())
+  vocabularyId String
+  format       String
+  prompt       String
+  choices      Json
+  answer       String
+  explanation  String
+  generatedAt  DateTime  @default(now())
+  lastServedAt DateTime?
+
+  vocabulary Vocabulary @relation(fields: [vocabularyId], references: [id], onDelete: Cascade)
+  attempts   Attempt[]
+
+  @@index([vocabularyId])
+  @@index([vocabularyId, lastServedAt])
+}
+
+/// 解答履歴。dailySetId が null なら自由学習（現状は常に非 null）。
+model Attempt {
+  id         String   @id @default(cuid())
+  userId     String
+  questionId String
+  dailySetId String?
+  answer     String
+  isCorrect  Boolean
+  answeredAt DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  dailySet DailySet? @relation(fields: [dailySetId], references: [id], onDelete: SetNull)
+
+  // 同一セット内の再解答を DB で防ぐ。dailySetId が null の行同士は衝突しない（PostgreSQL の仕様）。
+  // ★ 復習の進捗導出（WHERE dailySetId = ?、最頻クエリ）もこの一意インデックスが担う。
+  //   先頭列が dailySetId なので、単独の @@index([dailySetId]) は重複になり書き込みが増えるだけ。
+  @@unique([dailySetId, questionId])
+  @@index([userId, answeredAt])
+  @@index([userId, questionId])
+}
+
+/// その日の10問。一度決まったらその日の間は変わらない。
+model DailySet {
+  id          String   @id @default(cuid())
+  userId      String
+  /// ユーザーのタイムゾーンでの YYYY-MM-DD
+  date        String
+  questionIds Json
+  createdAt   DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempts Attempt[]
+
+  @@unique([userId, date])
+}
+
+/// Web Push の配信先。端末・ブラウザごとに1行。
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  keys      Json
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// API のレート制限（実装はステップ10）。
+/// Lambda はインスタンス間で状態を共有しないため、メモリではなく DB に持つ。
+model RateLimit {
+  id          String   @id @default(cuid())
+  userId      String
+  bucket      String
+  windowStart DateTime
+  count       Int      @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, bucket, windowStart])
+}

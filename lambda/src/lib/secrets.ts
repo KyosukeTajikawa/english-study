@@ -26,10 +26,12 @@ import { SSMClient, GetParametersCommand } from "@aws-sdk/client-ssm";
 /**
  * 取得対象の秘密情報。
  *
- * ステップ3で "DATABASE_URL" 等を追加する際は、ここと PARAMETER_NAME_ENV、
- * template.yaml の環境変数・IAM ポリシーの4箇所をセットで更新する。
+ * 追加する際は、ここと PARAMETER_NAME_ENV、index.ts の REQUIRED_ENV_VARS、
+ * template.yaml の環境変数・IAM ポリシーをセットで更新する。
+ *
+ * DATABASE_URL はパスワードを含むため秘密情報として扱う。
  */
-export type SecretName = "INTERNAL_API_KEY";
+export type SecretName = "INTERNAL_API_KEY" | "DATABASE_URL";
 
 /**
  * 秘密情報ごとの「SSM パラメータ名を格納した環境変数」の名前。
@@ -37,6 +39,7 @@ export type SecretName = "INTERNAL_API_KEY";
  */
 const PARAMETER_NAME_ENV: Record<SecretName, string> = {
   INTERNAL_API_KEY: "INTERNAL_API_KEY_PARAMETER",
+  DATABASE_URL: "DATABASE_URL_PARAMETER",
 };
 
 const client = new SSMClient({});
