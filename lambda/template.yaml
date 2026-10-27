@@ -11,6 +11,31 @@ Parameters:
       値そのものをこのファイルに書かないこと（template.yaml は Git 管理下に入る）。
       登録: aws ssm put-parameter --name <name> --type SecureString --value <secret>
 
+  DatabaseUrlParameter:
+    Type: String
+    Default: /english-study-app/database-url
+    Description: >-
+      Neon の pooled 接続文字列（...-pooler.<region>.aws.neon.tech）を保管した
+      SSM Parameter Store の名前。パスワードを含むため SecureString で登録する。
+      登録: aws ssm put-parameter --name <name> --type SecureString --value <url>
+
+  CfAccessTeamDomain:
+    Type: String
+    # ★ 既定値を持たせない。入れ忘れたらデプロイ自体を失敗させる。
+    AllowedPattern: ^[a-z0-9-]+\.cloudflareaccess\.com$
+    Description: >-
+      Cloudflare Access のチームドメイン（<team>.cloudflareaccess.com）。
+      JWT の発行者（iss）と公開鍵の取得先はここから作られる。
+      ログイン画面へのリダイレクト先のホスト名で確認できる。
+
+  CfAccessAud:
+    Type: String
+    AllowedPattern: ^[a-f0-9]{64}$
+    Description: >-
+      Access アプリケーションの Audience タグ。JWT の aud と照合する。
+      ★ これを検証しないと、同じチームの別アプリ向けトークンでも通る。
+      ログイン画面へのリダイレクト URL のクエリ kid= で確認できる。
+
   ReservedConcurrency:
     Type: Number
     Default: 0
@@ -57,34 +82,10 @@ Resources:
   ApiFunction:
     Type: AWS::Serverless::Function
     Metadata:
-      BuildMethod: esbuild
-      BuildProperties:
-        # ★ ESM ではなく CommonJS でバンドルする。
-        # npm の実用的なパッケージの多くは今も CommonJS で書かれており、
-        # 内部で require() を呼ぶ。ESM 形式にバンドルすると require が
-        # 存在せず、読み込んだ瞬間に落ちる:
-        #   Dynamic require of "node:https" is not supported   (@aws-sdk)
-        #   Dynamic require of "child_process" is not supported (@google/genai)
-        # 通常は esbuild の banner で createRequire を注入して回避するが、
-        # SAM の esbuild は banner に対応していない。CJS で出力すれば
-        # require がそのまま使えるため、この種の問題が原理的に起きない。
-        # package.json が "type": "module" なので拡張子は .cjs にする。
-        Format: cjs
-        Minify: true
-        Target: node22
-        OutExtension:
-          - .js=.cjs
-        # ★ AWS SDK はバンドルしない。
-        # SDK は CommonJS で書かれており、ESM 形式にバンドルすると
-        # 内部の require("node:https") が解決できず起動時に落ちる:
-        #   Error: Dynamic require of "node:https" is not supported
-        # SAM の esbuild は banner オプション（createRequire の注入）に
-        # 対応していないため、ランタイム同梱の SDK を使う。
-        External:
-          - "@aws-sdk/*"
-          - "@smithy/*"
-        EntryPoints:
-          - src/index.ts
+      # ★ SAM の esbuild ビルダーは使わない。バンドルは scripts/bundle.mjs が作り、
+      #   Makefile がそれを成果物の置き場へコピーする（理由は bundle.mjs の冒頭）。
+      #   CJS 出力・AWS SDK を含めない等のバンドル設定もそちらにある。
+      BuildMethod: makefile
     Properties:
       CodeUri: ./
       Handler: index.handler
@@ -98,9 +99,16 @@ Resources:
           # （復号済みの平文が関数設定に保存されるため AWS が禁止している）。
           # 値の取得は実行時に src/lib/secrets.ts が行う。
           INTERNAL_API_KEY_PARAMETER: !Ref InternalApiKeyParameter
+          DATABASE_URL_PARAMETER: !Ref DatabaseUrlParameter
+          CF_ACCESS_TEAM_DOMAIN: !Ref CfAccessTeamDomain
+          CF_ACCESS_AUD: !Ref CfAccessAud
+          # ★ CF_ACCESS_JWKS_URL は設定しない。未設定ならチームドメインから
+          #   Cloudflare の公開鍵 URL を組み立てる。これはローカルでテスト用の鍵に
+          #   差し替えるための変数で、本番に入るとテスト鍵の JWT が通りうる
+          #   （index.ts が Cloudflare 以外を指す値を起動時に拒否する）。
           NODE_OPTIONS: --enable-source-maps
       Policies:
-        # このパラメータだけを読めるようにする（他は読めない）。
+        # これらのパラメータだけを読めるようにする（他は読めない）。
         - Statement:
             - Effect: Allow
               Action:
@@ -108,6 +116,7 @@ Resources:
                 - ssm:GetParameters
               Resource:
                 - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${InternalApiKeyParameter}"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${DatabaseUrlParameter}"
         # SecureString の復号に必要。SSM 経由の呼び出しに限定する。
         - Statement:
             - Effect: Allow

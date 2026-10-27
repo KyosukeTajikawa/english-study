@@ -42,6 +42,11 @@ yarn-error.log*
 
 # AWS SAM
 lambda/.aws-sam/
+# Lambda のバンドル（scripts/bundle.mjs の出力）
+lambda/dist/
+
+# Prisma Client の生成物（npm run generate / build が毎回作り直す）
+lambda/src/generated/
 
 # wrangler のローカルキャッシュ
 .wrangler/
