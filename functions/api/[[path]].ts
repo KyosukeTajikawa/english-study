@@ -152,6 +152,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
   }
 
+  // ArrayBuffer はHTTPリクエストの本文を、文字列やJSONに変換せずにそのまま扱える型。
+  // 本文のデータが書き換えられていないかを確認するために署名する前に本文を読み込み、そのバイト数基に署名（SHA-256）を生成することで、どこかで本文を書き換えられても署名が一致せず、Lambda側で403エラーになる。（署名は本文のみだけでなくHTTP メソッドやAWSサービス名など多くのものを利用して作成される）
+  // 本文全てを署名に利用するため、ストリームのままでは署名できない。署名前に本文を読み込む必要がある。
+  // ストリームとは、データを一度に全て読み込むのではなく、少しずつ読み込むことができる仕組みのこと。HTTPリクエストの本文は大きなデータになることがあるため、ストリームとして扱うことでメモリ効率を良くすることができる。しかし、署名を行うためには本文全体のハッシュ値を計算する必要があるため、署名前に本文を全て読み込む必要がある。
   let body: ArrayBuffer | undefined;
   if (hasBody(request.method)) {
     body = await request.arrayBuffer();
@@ -223,6 +227,7 @@ function buildTargetUrl(
   base.pathname = incoming.pathname;
   base.search = incoming.search;
 
+  // matched[0] は全体、matched[1] はリージョン。Function URL の形でなければ null。
   const matched = FUNCTION_URL_HOST.exec(base.hostname);
   if (matched?.[1] !== undefined) {
     if (base.protocol !== "https:") return null;

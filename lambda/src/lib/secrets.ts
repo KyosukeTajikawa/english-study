@@ -70,6 +70,8 @@ async function fetchSecrets(): Promise<Record<SecretName, string>> {
   const requested = resolveParameterNames();
   const names = [...requested.keys()];
 
+  // SSM からパラメータを取得する。WithDecryption を true にすると
+  // SecureString の値を復号して返す。失敗すると例外になる。
   const response = await client.send(
     new GetParametersCommand({ Names: names, WithDecryption: true }),
   );
@@ -80,7 +82,9 @@ async function fetchSecrets(): Promise<Record<SecretName, string>> {
 
   const secrets = {} as Record<SecretName, string>;
   for (const parameter of response.Parameters ?? []) {
+    // INTERNAL_API_KEY_PARAMETER: INTERNAL_API_KEY;のため、requested.get(parameter.Name)はINTERNAL_API_KEY_PARAMETERのvalueである"INTERNAL_API_KEY"を返す
     const secretName = parameter.Name ? requested.get(parameter.Name) : undefined;
+    // INTERNAL_API_KEY: "SSMから取得した値",
     if (secretName && parameter.Value) {
       secrets[secretName] = parameter.Value;
     }
@@ -95,10 +99,14 @@ async function fetchSecrets(): Promise<Record<SecretName, string>> {
 }
 
 /** 環境変数から「SSM パラメータ名 → 秘密情報の識別子」の対応を作る。 */
+/** 環境変数はtemplate.yamlで定義されているINTERNAL_API_KEY_PARAMETER */
+/** process.envと書くと環境変数から取得できる */
+/** MapはRecordのようなもので、どちらでも実装できるが、Mapには組み込み関数があり簡単に書ける */
 function resolveParameterNames(): Map<string, SecretName> {
   const resolved = new Map<string, SecretName>();
   const missing: string[] = [];
 
+  /** オブジェクト（INTERNAL_API_KEY: "INTERNAL_API_KEY_PARAMETER"をそれぞれ[secretName, envName]に代入する。asの後はtypeScriptの型アサーション */
   for (const [secretName, envName] of Object.entries(PARAMETER_NAME_ENV) as [
     SecretName,
     string,

@@ -117,14 +117,16 @@ export async function verifyAccessJwt(
     throw new AuthenticationError("missing access token");
   }
 
+  // 初回はjwksUrlにアクセスして公開鍵を取得する。以降はキャッシュを使う。
   const { config, jwks } = getVerifier();
 
   let payload: unknown;
   try {
+    // jwtVerify() は署名に加え、許可した署名方式（RS256）、aud（このアプリ向けか）、
+    // iss（想定した Cloudflare Access 発行元か）、exp（有効期限）なども確認します。
     ({ payload } = await jwtVerify(token, jwks, {
       // ★ aud を検証しないと、同じ Cloudflare チームの別アプリ向けトークンでも通る。
       audience: config.audience,
-      // 署名・aud に加えて発行者も確認する（多層で確認する）。
       issuer: config.issuer,
       algorithms: ALLOWED_ALGORITHMS,
       clockTolerance: CLOCK_TOLERANCE_SECONDS,

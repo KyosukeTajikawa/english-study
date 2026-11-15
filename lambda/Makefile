@@ -4,5 +4,6 @@
 # ★ レシピの行頭はタブ文字であること（スペースだと make が失敗する）。
 
 build-ApiFunction:
+	npm ci
 	npm run bundle
 	cp dist/index.cjs dist/index.cjs.map "$(ARTIFACTS_DIR)/"
