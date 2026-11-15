@@ -141,7 +141,7 @@ English-study-app/
 └── doc/
 ```
 
-**型と Zod スキーマは `shared/` に置き、両方の `tsconfig.json` の `paths` で解決する。** `zod` のバージョンがフロントと Lambda でずれると型が非互換になるため、**同一バージョンに固定する**。
+**型と Zod スキーマは `shared/` に置き、両方の `tsconfig.json` の `paths` で解決する。** `zod` のバージョンがフロントと Lambda でずれると型が非互換になるため、**ルートの `package.json` にだけ入れ、Lambda もそれを使う**（`lambda/` に別途入れると2つのコピーがバンドルされる。ステップ3で実測）。
 
 ### Lambda の構成（重要）
 
@@ -284,7 +284,7 @@ API を増やすときは `template.yaml` ではなく **`router.ts` にルー�
 
 1. **Gemini の無料枠**: モデルごとの1日あたりリクエスト上限は AI Studio のダッシュボードで確認する。ステップ2で実測する。
 2. **出題形式（`Question.format`）の具体的な一覧**: ステップ6の着手前に確定する。
-3. **`shared/` を Lambda のバンドルに含める方法**: `sam build` の esbuild が `lambda/` の外を tsconfig の `paths` 経由で解決できるかは実測が必要。できなければ `BuildMethod: makefile` に切り替える（ステップ2・3）。
+3. ~~**`shared/` を Lambda のバンドルに含める方法**~~ → **ステップ3で確定: `BuildMethod: makefile`。** SAM の esbuild はソースを一時ディレクトリへコピーするため `../shared` を解決できず、回避策の `build_in_source` は開発用の依存を削除した。詳細は `doc/steps/03-database.md` の実施記録。
 4. **Cloudflare が偽造 `cf-access-jwt-assertion` ヘッダを除去するか**: 公式ドキュメントに記載がない。ステップ2で実測して結果を記録する。**除去されなくても構成は安全**（防御の本体は Lambda 側の署名・`aud`・`iss` 検証）。
 5. **各サービスの無料枠の実数値**: 上記「費用」の表は調査時点の値。ステップ2で公式ページを見て更新する。
 

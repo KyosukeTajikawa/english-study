@@ -20,10 +20,12 @@ Neon (PostgreSQL) を用意し、Prisma でスキーマを定義する。Lambda 
 | `lambda/src/lib/db.ts` | 新規 | Prisma Client の生成 |
 | `lambda/src/lib/auth.ts` | 新規 | **JWT 検証とユーザー解決（最重要）** |
 | `lambda/src/lib/internal-auth.ts` | 新規 | 共有シークレットの検証（定数時間比較） |
-| `lambda/src/repositories/user.ts` | 新規 | User の upsert・更新・取得 |
+| `lambda/src/repositories/user.ts` | 新規 | User の upsert（更新はステップ9で追加） |
+| `lambda/src/handlers/me.ts` | 新規 | `GET /api/me`。ログイン中のユーザーを返す（DB 読み書きと User 自動作成の確認を兼ねる） |
+| `lambda/scripts/bundle.mjs` / `lambda/Makefile` | 新規 | 自前の esbuild バンドル。SAM は makefile 方式でこれを使う（実施記録を参照） |
 | `shared/types.ts` | 変更 | モデルに対応する型を追加 |
 | `lambda/package.json` | 変更 | Prisma の依存、`db:seed`、`prisma generate` を含むビルドスクリプト |
-| `lambda/template.yaml` | 変更 | `DATABASE_URL` / `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` / `INTERNAL_API_KEY` を追加 |
+| `lambda/template.yaml` | 変更 | `DATABASE_URL_PARAMETER`（SSM のパラメータ名）/ `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` を追加。`BuildMethod: makefile` に変更 |
 | `.env.example` / `lambda/.env.example` | 変更 | 増えた変数を追記 |
 | `README.md` | 変更 | セットアップ手順 |
 
@@ -32,15 +34,16 @@ Neon (PostgreSQL) を用意し、Prisma でスキーマを定義する。Lambda 
 `lambda/` で:
 
 ```bash
-npm install @prisma/client@7.10.0 @prisma/adapter-neon@7.10.0 @neondatabase/serverless ws jose zod
-npm install -D prisma@7.10.0 @types/ws
+npm install --save-exact @prisma/client@7.10.0 @prisma/adapter-neon@7.10.0 @neondatabase/serverless ws jose
+npm install -D --save-exact prisma@7.10.0 @types/ws tsx
 ```
 
 > **重要**: `prisma` の npm `latest` タグは **`8.0.0-rc`** を指している。`npm install -D prisma` とすると RC が入り `@prisma/client@7.10.0` と不整合を起こす。**必ず `7.10.0` を明示する。**
 
 - `ws` は WebSocket 接続に必要（Node にグローバル `WebSocket` がないため）
 - `jose` は JWT の署名検証に使う
-- `zod` は `shared/` のスキーマで使うため、**フロント側と同一バージョン**を入れる
+- `zod` は**ルートにだけ入れる**（`npm install --save-exact zod`）。Lambda のコードもルートの `node_modules` から解決される。`lambda/` にも入れると、`shared/` 経由のものと合わせて**2つのコピーがバンドルされる**（実施記録を参照）
+- `tsx` はシード（`prisma db seed`）の実行に使う
 
 ## 実装方針
 
@@ -384,6 +387,38 @@ npm run db:seed                         # 開発用データ
 - [ ] **本番の CPU 時間を Workers Analytics で確認した**（署名の追加分が 10ms 予算に収まっている）
 - [ ] 正しい JWT でアクセスすると `User` が自動で作られる
 - [ ] 同じメールで2回アクセスしても `User` が重複しない（upsert がべき等）
+
+## ステップ3で判明した事実（実施記録 2026-10-26）
+
+### 設計どおりにいかず変えたもの
+
+| 事象 | 対処 |
+| --- | --- |
+| **`DATABASE_URL` はパスワードを含む。** 環境変数に平文で置くと関数設定に残る（ステップ2の `INTERNAL_API_KEY` と同じ問題） | SSM（SecureString）の `/english-study-app/database-url` に置き、環境変数にはパラメータ名 `DATABASE_URL_PARAMETER` だけを渡す。`INTERNAL_API_KEY` と同じ1回の `GetParameters` で取得する |
+| **SAM の esbuild はソースを一時ディレクトリへコピーしてからビルドする。** `../shared` が存在せず `Could not resolve "@shared/schemas/user"` で失敗した | 下の行の理由で `build_in_source` は使えない。**`BuildMethod: makefile`** に切り替え、バンドルは `scripts/bundle.mjs`（esbuild の API）で作る。makefile 方式なら `build_in_source` でも SAM は `npm install` を実行しない |
+| **esbuild 方式で `build_in_source = true` にすると、ソースの `node_modules` に本番用の `npm install` が走り、開発用の依存（esbuild・eslint・tsx）が消えた** | 上記の makefile 方式にした。消えた場合は `lambda/` で `npm install` すれば戻る |
+| **zod が2つバンドルされた。** `shared/` からはルート、Lambda からは `lambda/node_modules` の zod が解決される。サイズの無駄に加え、`instanceof ZodError` がコピーをまたぐと効かない | `lambda/` の zod を削除し、ルートの1つに揃えた。「同一バージョンに固定する」要件も構造的に満たせる |
+| `PrismaNeon` のコンストラクタは `neon.Pool` ではなく**接続設定（`PoolConfig`）**を受け取る（上の「3.」の図は旧 API） | `new PrismaNeon({ connectionString })`。接続プールはアダプタが内部で作る |
+| `Attempt(dailySetId)` の単独インデックスは、一意制約 `(dailySetId, questionId)` の先頭列と重複する | 作らない。復習の進捗導出（`WHERE dailySetId = ?`）は一意インデックスが担う |
+
+### 実装上の決定
+
+- **JWT の検証は `router.ts` が全ルートで無条件に行う**（`verifyAccessJwt()`、DB に触れない）。User の解決（upsert）は、ユーザーのデータを扱うハンドラが `getAuthenticatedUser(db, context.identity)` で行う。検証をハンドラ任せにすると呼び忘れが認証の穴になるため。`/api/health` も JWT を要求するが、DB には触れない
+- 公開鍵の取得失敗は **401 ではなく 500** にする。障害なのに「ログインし直して」と案内すると、原因の切り分けを誤らせる。jose は取得先が 200 以外を返すと専用クラスではない素の `JOSEError` を投げるため、**401 にする例外（トークン自体の不正）を列挙する方式**にしている（503 を返す JWKS で 500 になることを確認済み）
+- `CF_ACCESS_JWKS_URL` は「`*.cloudflareaccess.com` であること」だけでなく**チームドメインと完全一致**を要求する。`*.cloudflareaccess.com` には誰でもチームを作れるため
+- email は小文字に正規化してから User を引く。email を持たない JWT（サービストークン）は 401
+- 初回マイグレーションは DB に接続せず `prisma migrate diff --from-empty --to-schema` で生成した（`20261026000000_init`）。以降の変更は `prisma migrate dev` で作る
+- Cloudflare Access の値（チームドメイン・AUD）は秘密ではないので `samconfig.toml` の `parameter_overrides` に固定した。template 側は**既定値なし**＋`AllowedPattern` で、入れ忘れや形の誤りはデプロイ時に失敗する
+
+### 運用上の注意（セキュリティレビューで確認した事項）
+
+- **アプリ側に許可リストは無い。** Access のポリシーを通過し email を持つ JWT なら、初回アクセスで User が作られる。**Access のポリシーを広げる（「〜で終わるメール」ルールや、email が未検証になりうる IdP の追加）と、そのまま利用者が増える**ので、ポリシーの変更は慎重に行う
+- **シークレットはコンテナの寿命いっぱいキャッシュされる。** `INTERNAL_API_KEY` や `DATABASE_URL` を SSM で更新しても、稼働中のコンテナは古い値を使い続ける。ローテーション後は再デプロイ（`npm run deploy`）してコンテナを入れ替える
+- `INTERNAL_API_KEY` と `DATABASE_URL` は1回の `GetParameters` で取得するため、**片方のパラメータが無いと全 API が 500 になる**（安全側の失敗）。デプロイ前に両方を SSM に登録すること
+
+### バンドルサイズ
+
+**5.6MB（zip で約2.0MB）。** 想定の約1.6MBより大きい。内訳の大半（約4.4MB）は PostgreSQL 用クエリコンパイラの wasm が base64 で埋め込まれたもので、Prisma 7 の構成上避けられない。Lambda の上限（zip 50MB）には十分余裕がある。コールドスタートへの影響はデプロイ後に CloudWatch の `Init Duration` で確認する。
 
 ## 注意点
 

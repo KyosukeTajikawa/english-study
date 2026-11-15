@@ -3,8 +3,9 @@ import { createHash, timingSafeEqual } from "node:crypto";
 /**
  * Pages Functions ↔ Lambda 間の共有シークレットを検証する。
  *
- * Function URL は AuthType: NONE で公開されており、Cloudflare を経由せず
- * 誰でも直接叩ける。JWT 検証だけに頼ると、JWT が漏れた場合に Cloudflare 側の
+ * Function URL は AuthType: AWS_IAM で、署名の無いリクエストは AWS 側で弾かれる。
+ * それでもこの検証を残すのは、IAM の誤設定（AuthType を NONE に戻す等）に
+ * 備えるため。JWT 検証だけに頼ると、JWT が漏れた場合に Cloudflare 側の
  * ポリシーも WAF も効かないバイパス経路になる。そのため JWT より前に
  * この検証を通し、失敗したら DB にも Gemini にも触れずに終了する。
  */

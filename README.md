@@ -167,6 +167,8 @@ npm install
 cd lambda && npm install && cd ..
 ```
 
+ルートの `npm install` は Lambda のビルドにも必要（`shared/` と Lambda が共有する `zod` はルートにだけ入っている）。
+
 ### 環境変数
 
 フロントエンドと Lambda で分かれている。
@@ -189,6 +191,7 @@ API は相対パス `/api` を叩くため、ベース URL の設定は不要。
 | 変数 | 説明 |
 | --- | --- |
 | `DATABASE_URL` | Neon の **pooled** 接続文字列（`...-pooler.<region>.aws.neon.tech`） |
+| `DIRECT_URL` | Neon の **unpooled**（直結）接続文字列。マイグレーション専用 |
 | `DATABASE_URL_TEST` | E2E 用（Neon のブランチ） |
 | `GEMINI_API_KEY` | Gemini API キー |
 | `VAPID_PRIVATE_KEY` | Web Push の秘密鍵 |
@@ -229,8 +232,15 @@ npx web-push generate-vapid-keys
 
 ```bash
 cd lambda
-npx prisma migrate deploy
-npm run db:seed
+npm run db:migrate    # prisma migrate deploy（DIRECT_URL を使う）
+npm run db:seed       # 開発用データ。何度流しても増えない
+```
+
+本番の Lambda は接続文字列を環境変数ではなく SSM Parameter Store から読む（パスワードを含むため）。
+
+```bash
+aws ssm put-parameter --region ap-northeast-1 --type SecureString \
+  --name /english-study-app/database-url --value '<pooled 接続文字列>'
 ```
 
 ### 起動
@@ -251,12 +261,11 @@ http://localhost:8788 を開く。
 
 ```bash
 cd lambda
-npx prisma generate    # sam build は自動実行しない
-sam build
-sam deploy
+npm run build     # sam build（prisma generate とバンドルも実行される）
+npm run deploy    # sam deploy
 ```
 
-初回は `sam deploy --guided` で設定を作成する。**リージョンは `ap-northeast-1`（東京）を選ぶこと** — Gemini API は呼び出し元のリージョンで制限されるため。
+設定は `lambda/samconfig.toml` に固定してある。**リージョンは `ap-northeast-1`（東京）** — Gemini API は呼び出し元のリージョンで制限されるため。Cloudflare Access のチームドメインと Audience タグも `parameter_overrides` で渡している（ログイン画面へのリダイレクト URL から確認できる）。
 
 ### フロントエンド（Cloudflare Pages）
 

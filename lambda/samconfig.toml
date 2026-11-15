@@ -7,6 +7,12 @@ stack_name = "english-study-app"
 
 [default.build.parameters]
 cached = true
+# ★ ソースをコピーせず、その場で Makefile を実行させる。
+# 既定では SAM が CodeUri（lambda/）を一時ディレクトリへコピーしてからビルドするため、
+# lambda/ の外にある ../shared/ が解決できない（Could not resolve "@shared/..."）。
+# makefile 方式なので SAM は npm install を実行しない（esbuild 方式で有効にすると
+# 開発用の依存が削除される。scripts/bundle.mjs 参照）。
+build_in_source = true
 
 [default.deploy.parameters]
 # ★ 東京。Gemini API のリージョン制限のため変更しないこと。
@@ -22,3 +28,10 @@ capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
 # デプロイ用の S3 バケットを AWS 側に自動作成・再利用させる。
 resolve_s3 = true
 confirm_changeset = false
+# Cloudflare Access の値。秘密ではない（ログイン画面へのリダイレクト URL に
+# 誰でも見える形で出ている）ので、ここに固定してデプロイのたびに揃える。
+# 取得方法は doc/steps/02-smoke-test.md の「ステップ3で使う値」。
+parameter_overrides = [
+  "CfAccessTeamDomain=english-study-app-5zr-pages.cloudflareaccess.com",
+  "CfAccessAud=ea25cdb45832189b3e29dd69a64b7fefbfd1d906161eb2d231dafb00ecd7d592",
+]
