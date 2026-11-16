@@ -83,11 +83,18 @@ npm run dev     # 開発サーバー起動（next dev、Turbopack 使用）
 npm run build   # 本番ビルド
 npm run start   # 本番ビルドの起動
 npm run lint    # ESLint（flat config、eslint.config.mjs）
+npm test              # フロントの Vitest（jsdom）
+npm run test:coverage # カバレッジ 80% 未満で失敗
+npm run test:e2e      # テスト用 DB をリセットしてから Playwright（build + wrangler pages dev + local-server を自動起動）
+
+# lambda/ で
+npm test / npm run test:coverage  # Lambda の Vitest（node）
+npm run local                     # ローカル用 HTTP サーバー（:3001、DB は DATABASE_URL_TEST）
+npm run keys:generate             # テスト鍵と LOCAL_TEST_JWT を生成（.dev.vars に貼る）
+npm run db:reset-test             # テスト用 DB を空にしてシード
 ```
 
-テストランナーは未設定です — `package.json` にテストスクリプトはなく、テストファイルもリポジトリ内に存在しません（ステップ4で Vitest / Playwright を導入予定）。
-
-`lambda/` ディレクトリはまだ存在しません（ステップ2で作成）。作成後は Lambda 側で別途 `npm install` が必要になります。
+Lambda 側は `lambda/` で別途 `npm install` が必要です。テストは各ディレクトリの `__tests__/` に置き、Lambda のテストは**先に書く**（ステップ4以降）。
 
 ## バージョン固定の注意
 

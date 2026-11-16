@@ -1,4 +1,6 @@
-import { createPrismaClient } from "../src/lib/db.js";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createPrismaClient, type PrismaClient } from "../src/lib/db.js";
 
 /**
  * 開発用のシード。`npm run db:seed`（prisma db seed）で実行する。
@@ -38,6 +40,28 @@ const SEED_VOCABULARIES = [
   },
 ] as const;
 
+/**
+ * シードを投入する。reset-test-db.ts からも呼ぶ（テスト用 DB をリセットした後）。
+ * 呼び出し側が db の接続と切断を管理する。
+ */
+export async function seedDatabase(db: PrismaClient, email: string = SEED_USER_EMAIL): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const user = await tx.user.upsert({
+      where: { email },
+      update: {},
+      create: { email },
+    });
+
+    for (const { id, ...vocabulary } of SEED_VOCABULARIES) {
+      const data = { ...vocabulary, examples: [...vocabulary.examples], userId: user.id };
+      await tx.vocabulary.upsert({ where: { id }, update: data, create: { id, ...data } });
+    }
+  });
+
+  const count = await db.vocabulary.count({ where: { user: { email } } });
+  console.log(`seeded: user=${email}, vocabularies=${count}`);
+}
+
 async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -46,27 +70,16 @@ async function main(): Promise<void> {
 
   const db = createPrismaClient(databaseUrl);
   try {
-    await db.$transaction(async (tx) => {
-      const user = await tx.user.upsert({
-        where: { email: SEED_USER_EMAIL },
-        update: {},
-        create: { email: SEED_USER_EMAIL },
-      });
-
-      for (const { id, ...vocabulary } of SEED_VOCABULARIES) {
-        const data = { ...vocabulary, examples: [...vocabulary.examples], userId: user.id };
-        await tx.vocabulary.upsert({ where: { id }, update: data, create: { id, ...data } });
-      }
-    });
-
-    const count = await db.vocabulary.count({ where: { user: { email: SEED_USER_EMAIL } } });
-    console.log(`seeded: user=${SEED_USER_EMAIL}, vocabularies=${count}`);
+    await seedDatabase(db);
   } finally {
     await db.$disconnect();
   }
 }
 
-main().catch((cause: unknown) => {
-  console.error("seed failed", cause);
-  process.exitCode = 1;
-});
+// import されたとき（reset-test-db.ts）は実行しない。直接実行されたときだけ流す。
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  main().catch((cause: unknown) => {
+    console.error("seed failed", cause);
+    process.exitCode = 1;
+  });
+}
