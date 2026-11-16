@@ -53,6 +53,22 @@ export async function getSecret(name: SecretName): Promise<string> {
   return secrets[name];
 }
 
+/**
+ * SSM を経由せずに秘密情報を与える。**ローカル開発専用。local-server.ts だけが呼ぶ。**
+ *
+ * ★ 環境変数のフラグ（「ローカルなら SSM を読まない」等）で切り替えないこと。
+ *   フラグは本番に誤って渡った時点で効いてしまう。この関数は本番の
+ *   エントリポイント（index.ts）から一切呼ばれないので、本番で値が
+ *   差し替わる経路が構造的に存在しない（esbuild のバンドルにも残らない）。
+ */
+export function provideSecretsForLocal(values: Record<SecretName, string>): void {
+  const missing = (Object.keys(PARAMETER_NAME_ENV) as SecretName[]).filter((name) => !values[name]);
+  if (missing.length > 0) {
+    throw new Error(`Missing local secrets: ${missing.join(", ")}`);
+  }
+  cached = Promise.resolve({ ...values });
+}
+
 function loadSecrets(): Promise<Record<SecretName, string>> {
   if (cached) return cached;
 

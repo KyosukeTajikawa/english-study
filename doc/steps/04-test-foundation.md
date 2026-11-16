@@ -172,8 +172,12 @@ E2E 実行前に必ずリセットしてシードし直す。特にステップ8
 
 | 用途 | 方法 |
 | --- | --- |
-| **UI の作り込み** | `next dev` + `next.config.ts` の `rewrites` で `/api/:path*` を `local-server` に転送。ホットリロードが効く |
+| **UI の作り込み** | `next dev` + `next.config.ts` の `rewrites` で `/api/:path*` を **`wrangler pages dev`（中継, :8788）** に転送。ホットリロードが効く |
 | **本番同等の確認・E2E** | `npm run build && npx wrangler pages dev out/` |
+
+> ★ 転送先は `local-server`（:3001）では**ない**。ブラウザは `X-Internal-Api-Key` も JWT も付けないため、直接送ると必ず 403 になる。中継を通せば本番と同じく中継がそれらを付ける。経路は `next dev → wrangler pages dev → local-server`。UI 開発中も `npm --prefix lambda run local` と `wrangler pages dev out/` を起動しておく（`out/` は一度ビルドしてあればよい。`/api/*` しか使わない）。
+>
+> `rewrites` は `next.config.ts` で **dev サーバーのフェーズのときだけ**付ける（ビルドには渡さない）。dev 起動時に「rewrites は output: export では効かない」旨の警告が1回出るが、dev サーバーでは効くことを実測で確認済み。
 
 > `output: "export"` 下で `rewrites` がビルドに効かないのは想定どおり（静的書き出しには含まれない）。**dev サーバーでは効く**が、この挙動はステップ4で実測して確認すること。効かなければ UI 開発も `wrangler pages dev` に統一する。
 

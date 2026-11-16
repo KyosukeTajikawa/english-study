@@ -14,19 +14,26 @@
     "build": "sam build",
     "deploy": "sam deploy",
     "db:migrate": "prisma migrate deploy",
-    "db:seed": "prisma db seed"
+    "db:seed": "prisma db seed",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "local": "tsx src/local-server.ts",
+    "keys:generate": "tsx scripts/gen-test-keys.ts",
+    "db:reset-test": "tsx prisma/reset-test-db.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@types/aws-lambda": "^8.10.163",
     "@types/node": "^22.19.0",
     "@types/ws": "8.18.2",
+    "@vitest/coverage-v8": "4.1.11",
     "esbuild": "^0.27.0",
     "eslint": "^9.39.1",
     "prisma": "7.10.0",
     "tsx": "4.23.15",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.47.0"
+    "typescript-eslint": "^8.47.0",
+    "vitest": "4.1.11"
   },
   "dependencies": {
     "@aws-sdk/client-ssm": "^3.1136.0",
