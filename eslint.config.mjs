@@ -17,6 +17,12 @@ const eslintConfig = defineConfig([
     "lambda/**",
     "functions/**",
     "e2e/**",
+    // テストの生成物。
+    "coverage/**",
+    "playwright-report/**",
+    "test-results/**",
+    // wrangler pages dev が作る一時ファイル。
+    ".wrangler/**",
   ]),
 ]);
 
